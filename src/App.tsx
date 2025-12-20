@@ -28,6 +28,7 @@ export default function App() {
     exportData,
     importData,
     clearAll,
+    reload,
   } = useMibStorage();
 
   const [selectedNode, setSelectedNode] = useState<MibNode | null>(null);
@@ -85,8 +86,8 @@ export default function App() {
     });
   }, []);
 
-  const handleUpload = useCallback(async (file: File, forceUpload = false) => {
-    const result = await uploadMib(file, forceUpload);
+  const handleUpload = useCallback(async (file: File, forceUpload = false, skipReload = false) => {
+    const result = await uploadMib(file, forceUpload, skipReload);
     return result;
   }, [uploadMib]);
 
@@ -181,7 +182,7 @@ export default function App() {
         <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
           <div className="p-4 border-b border-gray-200">
             <h2 className="text-lg font-semibold text-gray-800 mb-4">Saved MIBs</h2>
-            <FileUploader onUpload={handleUpload} />
+            <FileUploader onUpload={handleUpload} onReload={reload} />
           </div>
 
           <div className="flex-1 overflow-y-auto">

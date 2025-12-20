@@ -114,7 +114,7 @@ export function useMibStorage() {
   }, []);
 
   // MIBファイルをアップロード
-  const uploadMib = useCallback(async (file: File, forceUpload = false): Promise<UploadResult> => {
+  const uploadMib = useCallback(async (file: File, forceUpload = false, skipReload = false): Promise<UploadResult> => {
     try {
       const content = await file.text();
 
@@ -161,7 +161,11 @@ export function useMibStorage() {
       };
 
       await saveMib(mibData);
-      await loadData(); // 再読み込み
+
+      // skipReloadがfalseの場合のみ再読み込み
+      if (!skipReload) {
+        await loadData();
+      }
 
       return { success: true };
     } catch (error) {
