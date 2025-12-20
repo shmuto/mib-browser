@@ -120,15 +120,18 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
     fileInputRef.current?.click();
   }, []);
 
-  const handleConflictCancel = useCallback(() => {
+  const handleConflictCancel = useCallback(async () => {
     setConflictResult(null);
     setPendingFile(null);
 
-    // 残りのファイルの処理を続行
-    if (remainingFiles.length > 0) {
-      processRemainingFiles(remainingFiles);
+    // キャンセル時は残りのファイルをクリアしてアップロードを停止
+    setRemainingFiles([]);
+
+    // 最後にリロード
+    if (onReload) {
+      await onReload();
     }
-  }, [remainingFiles, processRemainingFiles]);
+  }, [onReload]);
 
   const handleConflictForceUpload = useCallback(async () => {
     if (pendingFile) {
