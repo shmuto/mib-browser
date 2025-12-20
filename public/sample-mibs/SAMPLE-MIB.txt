@@ -1,0 +1,424 @@
+SAMPLE-MIB DEFINITIONS ::= BEGIN
+
+-- Sample MIB for testing MIB Browser
+-- Based on SMIv2 (RFC 2578-2580)
+-- This is a comprehensive test MIB demonstrating various SNMP constructs
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, NOTIFICATION-TYPE,
+    Integer32, Counter32, Gauge32, TimeTicks, IpAddress,
+    enterprises
+        FROM SNMPv2-SMI
+    MODULE-COMPLIANCE, OBJECT-GROUP, NOTIFICATION-GROUP
+        FROM SNMPv2-CONF
+    TEXTUAL-CONVENTION, DisplayString, TruthValue, DateAndTime
+        FROM SNMPv2-TC;
+
+sampleMIB MODULE-IDENTITY
+    LAST-UPDATED "202512210000Z"
+    ORGANIZATION "MIB Browser Test Organization"
+    CONTACT-INFO
+        "Email: test@example.com
+         Web: https://github.com/shmuto/mib-browser"
+    DESCRIPTION
+        "This is a comprehensive sample MIB for testing the MIB Browser.
+         It includes various SNMP constructs including MODULE-IDENTITY,
+         OBJECT-TYPE definitions, textual conventions, notifications,
+         and compliance statements."
+    REVISION "202512210000Z"
+    DESCRIPTION
+        "Initial version of the sample MIB."
+    ::= { enterprises 99999 }
+
+-- Top-level MIB structure
+sampleObjects       OBJECT IDENTIFIER ::= { sampleMIB 1 }
+sampleNotifications OBJECT IDENTIFIER ::= { sampleMIB 2 }
+sampleConformance   OBJECT IDENTIFIER ::= { sampleMIB 3 }
+
+-- Object groups
+sampleSystem        OBJECT IDENTIFIER ::= { sampleObjects 1 }
+sampleDevice        OBJECT IDENTIFIER ::= { sampleObjects 2 }
+sampleNetwork       OBJECT IDENTIFIER ::= { sampleObjects 3 }
+sampleStats         OBJECT IDENTIFIER ::= { sampleObjects 4 }
+
+-- Textual Conventions
+OperStatus ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION
+        "The operational status of a component."
+    SYNTAX       INTEGER {
+                     up(1),
+                     down(2),
+                     testing(3),
+                     unknown(4),
+                     dormant(5)
+                 }
+
+AdminStatus ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION
+        "The administrative status of a component."
+    SYNTAX       INTEGER {
+                     enabled(1),
+                     disabled(2)
+                 }
+
+-- System Group
+sampleSysDescr OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..255))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A textual description of the system including hardware,
+         operating system, and software version information."
+    ::= { sampleSystem 1 }
+
+sampleSysObjectID OBJECT-TYPE
+    SYNTAX      OBJECT IDENTIFIER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The vendor's authoritative identification of the system."
+    ::= { sampleSystem 2 }
+
+sampleSysUpTime OBJECT-TYPE
+    SYNTAX      TimeTicks
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The time (in hundredths of a second) since the system was
+         last re-initialized."
+    ::= { sampleSystem 3 }
+
+sampleSysContact OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..255))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "The textual identification of the contact person for this
+         system, including information on how to contact this person."
+    ::= { sampleSystem 4 }
+
+sampleSysName OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..255))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "An administratively-assigned name for this system."
+    ::= { sampleSystem 5 }
+
+sampleSysLocation OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..255))
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "The physical location of this system (e.g., rack, room, building)."
+    ::= { sampleSystem 6 }
+
+sampleSysServices OBJECT-TYPE
+    SYNTAX      Integer32 (0..127)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "A value which indicates the set of services that this system
+         offers. The value is a sum of layer values: physical(1),
+         datalink(2), internet(4), transport(8), session(16),
+         presentation(32), application(64)."
+    ::= { sampleSystem 7 }
+
+-- Device Group
+sampleDeviceCount OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The total number of devices managed by this system."
+    ::= { sampleDevice 1 }
+
+sampleDeviceTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF SampleDeviceEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "A table containing information about managed devices."
+    ::= { sampleDevice 2 }
+
+sampleDeviceEntry OBJECT-TYPE
+    SYNTAX      SampleDeviceEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "An entry containing information about a single device."
+    INDEX       { sampleDeviceIndex }
+    ::= { sampleDeviceTable 1 }
+
+SampleDeviceEntry ::= SEQUENCE {
+    sampleDeviceIndex       Integer32,
+    sampleDeviceName        DisplayString,
+    sampleDeviceType        INTEGER,
+    sampleDeviceStatus      OperStatus,
+    sampleDeviceAdminStatus AdminStatus,
+    sampleDeviceUpTime      TimeTicks,
+    sampleDeviceLastChange  DateAndTime
+}
+
+sampleDeviceIndex OBJECT-TYPE
+    SYNTAX      Integer32 (1..2147483647)
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION
+        "A unique value identifying this device."
+    ::= { sampleDeviceEntry 1 }
+
+sampleDeviceName OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..64))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The name of this device."
+    ::= { sampleDeviceEntry 2 }
+
+sampleDeviceType OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    other(1),
+                    router(2),
+                    switch(3),
+                    hub(4),
+                    bridge(5),
+                    server(6),
+                    workstation(7),
+                    printer(8)
+                }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The type of this device."
+    ::= { sampleDeviceEntry 3 }
+
+sampleDeviceStatus OBJECT-TYPE
+    SYNTAX      OperStatus
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The current operational status of this device."
+    ::= { sampleDeviceEntry 4 }
+
+sampleDeviceAdminStatus OBJECT-TYPE
+    SYNTAX      AdminStatus
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+        "The desired administrative status of this device."
+    ::= { sampleDeviceEntry 5 }
+
+sampleDeviceUpTime OBJECT-TYPE
+    SYNTAX      TimeTicks
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The time since this device was last reinitialized."
+    ::= { sampleDeviceEntry 6 }
+
+sampleDeviceLastChange OBJECT-TYPE
+    SYNTAX      DateAndTime
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The date and time when the device status last changed."
+    ::= { sampleDeviceEntry 7 }
+
+-- Network Group
+sampleNetworkInterfaces OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The number of network interfaces on this system."
+    ::= { sampleNetwork 1 }
+
+sampleNetworkIpAddress OBJECT-TYPE
+    SYNTAX      IpAddress
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The primary IP address of this system."
+    ::= { sampleNetwork 2 }
+
+sampleNetworkBandwidth OBJECT-TYPE
+    SYNTAX      Gauge32
+    UNITS       "Mbps"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The total available network bandwidth in megabits per second."
+    ::= { sampleNetwork 3 }
+
+-- Statistics Group
+sampleStatsPacketsIn OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The total number of packets received."
+    ::= { sampleStats 1 }
+
+sampleStatsPacketsOut OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The total number of packets transmitted."
+    ::= { sampleStats 2 }
+
+sampleStatsBytesIn OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The total number of bytes received."
+    ::= { sampleStats 3 }
+
+sampleStatsBytesOut OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The total number of bytes transmitted."
+    ::= { sampleStats 4 }
+
+sampleStatsErrors OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The total number of errors encountered."
+    ::= { sampleStats 5 }
+
+sampleStatsDrops OBJECT-TYPE
+    SYNTAX      Counter32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "The total number of packets dropped."
+    ::= { sampleStats 6 }
+
+-- Notifications
+sampleDeviceStatusChange NOTIFICATION-TYPE
+    OBJECTS     {
+                    sampleDeviceName,
+                    sampleDeviceStatus,
+                    sampleDeviceLastChange
+                }
+    STATUS      current
+    DESCRIPTION
+        "This notification is sent when a device's operational
+         status changes."
+    ::= { sampleNotifications 1 }
+
+sampleSystemRestart NOTIFICATION-TYPE
+    OBJECTS     {
+                    sampleSysName,
+                    sampleSysUpTime
+                }
+    STATUS      current
+    DESCRIPTION
+        "This notification is sent when the system restarts."
+    ::= { sampleNotifications 2 }
+
+sampleHighErrors NOTIFICATION-TYPE
+    OBJECTS     {
+                    sampleStatsErrors,
+                    sampleStatsDrops
+                }
+    STATUS      current
+    DESCRIPTION
+        "This notification is sent when the error rate exceeds
+         a configured threshold."
+    ::= { sampleNotifications 3 }
+
+-- Conformance Information
+sampleCompliances  OBJECT IDENTIFIER ::= { sampleConformance 1 }
+sampleGroups       OBJECT IDENTIFIER ::= { sampleConformance 2 }
+
+-- Compliance Statements
+sampleBasicCompliance MODULE-COMPLIANCE
+    STATUS      current
+    DESCRIPTION
+        "The compliance statement for entities implementing
+         the basic features of SAMPLE-MIB."
+    MODULE
+        MANDATORY-GROUPS {
+            sampleSystemGroup,
+            sampleDeviceGroup,
+            sampleNotificationGroup
+        }
+    ::= { sampleCompliances 1 }
+
+-- Object Groups
+sampleSystemGroup OBJECT-GROUP
+    OBJECTS     {
+                    sampleSysDescr,
+                    sampleSysObjectID,
+                    sampleSysUpTime,
+                    sampleSysContact,
+                    sampleSysName,
+                    sampleSysLocation,
+                    sampleSysServices
+                }
+    STATUS      current
+    DESCRIPTION
+        "A collection of objects providing basic system information."
+    ::= { sampleGroups 1 }
+
+sampleDeviceGroup OBJECT-GROUP
+    OBJECTS     {
+                    sampleDeviceCount,
+                    sampleDeviceName,
+                    sampleDeviceType,
+                    sampleDeviceStatus,
+                    sampleDeviceAdminStatus,
+                    sampleDeviceUpTime,
+                    sampleDeviceLastChange
+                }
+    STATUS      current
+    DESCRIPTION
+        "A collection of objects for device management."
+    ::= { sampleGroups 2 }
+
+sampleNetworkGroup OBJECT-GROUP
+    OBJECTS     {
+                    sampleNetworkInterfaces,
+                    sampleNetworkIpAddress,
+                    sampleNetworkBandwidth
+                }
+    STATUS      current
+    DESCRIPTION
+        "A collection of objects for network information."
+    ::= { sampleGroups 3 }
+
+sampleStatsGroup OBJECT-GROUP
+    OBJECTS     {
+                    sampleStatsPacketsIn,
+                    sampleStatsPacketsOut,
+                    sampleStatsBytesIn,
+                    sampleStatsBytesOut,
+                    sampleStatsErrors,
+                    sampleStatsDrops
+                }
+    STATUS      current
+    DESCRIPTION
+        "A collection of objects for statistics."
+    ::= { sampleGroups 4 }
+
+sampleNotificationGroup NOTIFICATION-GROUP
+    NOTIFICATIONS {
+                    sampleDeviceStatusChange,
+                    sampleSystemRestart,
+                    sampleHighErrors
+                }
+    STATUS      current
+    DESCRIPTION
+        "A collection of notifications for system events."
+    ::= { sampleGroups 5 }
+
+END
