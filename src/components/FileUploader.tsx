@@ -31,8 +31,8 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
     }
   }, [onUpload]);
 
-  const processRemainingFiles = useCallback(async () => {
-    if (remainingFiles.length === 0) {
+  const processRemainingFiles = useCallback(async (files: File[]) => {
+    if (files.length === 0) {
       // すべてのファイルの処理が完了したら、一度だけリロード
       if (onReload) {
         await onReload();
@@ -40,8 +40,7 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
       return;
     }
 
-    const [nextFile, ...rest] = remainingFiles;
-    setRemainingFiles(rest);
+    const [nextFile, ...rest] = files;
 
     // 残りのファイルがある場合はskipReloadを有効にする
     const skipReload = rest.length > 0;
@@ -50,9 +49,9 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
     // 競合が検出されなかった場合、次のファイルに進む
     if (success) {
       // 次のファイルを処理
-      setTimeout(() => processRemainingFiles(), 0);
+      await processRemainingFiles(rest);
     }
-  }, [remainingFiles, processUpload, onReload]);
+  }, [processUpload, onReload]);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -76,7 +75,7 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
     // 競合が検出されなかった場合、次のファイルに進む
     if (success) {
       if (rest.length > 0) {
-        setTimeout(() => processRemainingFiles(), 0);
+        await processRemainingFiles(rest);
       } else if (onReload) {
         // 単一ファイルの場合も明示的にリロード
         await onReload();
@@ -109,7 +108,7 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
     // 競合が検出されなかった場合、次のファイルに進む
     if (success) {
       if (rest.length > 0) {
-        setTimeout(() => processRemainingFiles(), 0);
+        await processRemainingFiles(rest);
       } else if (onReload) {
         // 単一ファイルの場合も明示的にリロード
         await onReload();
@@ -127,7 +126,7 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
 
     // 残りのファイルの処理を続行
     if (remainingFiles.length > 0) {
-      setTimeout(() => processRemainingFiles(), 0);
+      processRemainingFiles(remainingFiles);
     }
   }, [remainingFiles, processRemainingFiles]);
 
@@ -142,7 +141,7 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
 
     // 残りのファイルの処理を続行
     if (remainingFiles.length > 0) {
-      setTimeout(() => processRemainingFiles(), 0);
+      await processRemainingFiles(remainingFiles);
     } else if (onReload) {
       // 最後のファイルの場合はリロード
       await onReload();
