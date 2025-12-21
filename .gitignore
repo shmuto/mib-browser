@@ -15,6 +15,9 @@ dist-ssr
 # Test files
 test-*.js
 
+# GitHub issues directory
+github-issues
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
