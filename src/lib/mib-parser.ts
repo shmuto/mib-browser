@@ -283,8 +283,8 @@ function extractOidAssignments(content: string): Array<{ name: string; oid: stri
     });
   }
 
-  // 既知のルートOID（SMI標準定義のみ）
-  // ベンダー固有のOIDはハードコードせず、IMPORTS解析で動的に解決する
+  // 既知のルートOID（SMI標準定義 + IANA Enterprise Numbers）
+  // ベンダー固有の製品OIDはIMPORTS解析で動的に解決する
   const knownRoots: Array<{ name: string; oid: string }> = [
     // ISO標準ルート
     { name: 'iso', oid: '1' },
@@ -310,6 +310,15 @@ function extractOidAssignments(content: string): Array<{ name: string; oid: stri
     { name: 'udp', oid: '1.3.6.1.2.1.7' },
     { name: 'egp', oid: '1.3.6.1.2.1.8' },
     { name: 'snmp', oid: '1.3.6.1.2.1.11' },
+
+    // IANA Enterprise Numbers（主要ベンダー）
+    // https://www.iana.org/assignments/enterprise-numbers/
+    { name: 'cisco', oid: '1.3.6.1.4.1.9' },
+    { name: 'hp', oid: '1.3.6.1.4.1.11' },
+    { name: 'sun', oid: '1.3.6.1.4.1.42' },
+    { name: 'dell', oid: '1.3.6.1.4.1.674' },
+    { name: 'juniper', oid: '1.3.6.1.4.1.2636' },
+    { name: 'arista', oid: '1.3.6.1.4.1.30065' },
   ];
 
   const oidMap = new Map<string, string>();
