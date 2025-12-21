@@ -15,7 +15,8 @@ import StorageManager from './components/StorageManager';
 import TreeExpandControls from './components/TreeExpandControls';
 import MibContentModal from './components/MibContentModal';
 import ResizablePanel from './components/ResizablePanel';
-import { Database, Github } from 'lucide-react';
+import { Database } from 'lucide-react';
+import { SiGithub } from 'react-icons/si';
 
 export default function App() {
   const {
@@ -170,7 +171,7 @@ export default function App() {
             rel="noopener noreferrer"
             className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors"
           >
-            <Github size={20} />
+            <SiGithub size={20} />
             <span className="text-sm">GitHub</span>
           </a>
         </div>
