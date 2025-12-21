@@ -63,8 +63,8 @@ export function parseMibFile(
     // IMPORTSブロックを削除（パース干渉を防ぐため）
     cleanedContent = cleanedContent.replace(/IMPORTS[\s\S]*?;/gi, '');
 
-    // OBJECT IDENTIFIER定義を抽出
-    const oidAssignments = extractOidAssignments(cleanedContent);
+    // OBJECT IDENTIFIER定義を抽出（現在のoidMapを渡して参照できるようにする）
+    const oidAssignments = extractOidAssignments(cleanedContent, oidMap);
     oidAssignments.forEach(({ name, oid }) => {
       oidMap.set(name, oid);
     });
@@ -233,7 +233,10 @@ function removeComments(content: string): string {
 /**
  * OBJECT IDENTIFIER定義を抽出
  */
-function extractOidAssignments(content: string): Array<{ name: string; oid: string; description?: string; type?: string }> {
+function extractOidAssignments(
+  content: string,
+  externalOidMap?: Map<string, string>
+): Array<{ name: string; oid: string; description?: string; type?: string }> {
   const assignments: Array<{ name: string; oid: string; description?: string; type?: string }> = [];
 
   // パターン1: identifier OBJECT IDENTIFIER ::= { parent child1 child2 ... }
@@ -347,6 +350,15 @@ function extractOidAssignments(content: string): Array<{ name: string; oid: stri
   ];
 
   const oidMap = new Map<string, string>();
+
+  // 外部OIDマップをマージ（他のMIBファイルで定義されたOID）
+  if (externalOidMap) {
+    externalOidMap.forEach((oid, name) => {
+      oidMap.set(name, oid);
+    });
+  }
+
+  // 既知のルートを追加
   knownRoots.forEach(({ name, oid }) => {
     oidMap.set(name, oid);
   });
