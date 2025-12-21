@@ -283,6 +283,31 @@ function extractOidAssignments(content: string): Array<{ name: string; oid: stri
     });
   }
 
+  // パターン3: identifier OBJECT-IDENTITY ... ::= { parent child1 child2 ... }
+  const pattern3 = /^(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
+
+  while ((match = pattern3.exec(content)) !== null) {
+    const name = match[1];
+    if (name === 'IMPORTS') continue;
+
+    const parent = match[2];
+    const childNumbers = match[3].trim().split(/\s+/);
+
+    // DESCRIPTIONを抽出
+    const fullMatch = match[0];
+    const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
+    const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
+
+    const oid = `${parent}.${childNumbers.join('.')}`;
+
+    assignments.push({
+      name,
+      oid,
+      description,
+      type: 'OBJECT-IDENTITY',
+    });
+  }
+
   // 既知のルートOID（SMI標準定義 + IANA Enterprise Numbers）
   // ベンダー固有の製品OIDはIMPORTS解析で動的に解決する
   const knownRoots: Array<{ name: string; oid: string }> = [
