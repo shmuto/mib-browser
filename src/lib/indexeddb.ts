@@ -125,28 +125,21 @@ export async function clearAllMibs(): Promise<void> {
 
 // Get storage size estimate (IndexedDB quota)
 export async function getStorageInfo(): Promise<{ used: number; available: number; percentage: number }> {
-  if ('storage' in navigator && 'estimate' in navigator.storage) {
-    const estimate = await navigator.storage.estimate();
-    const used = estimate.usage || 0;
-    const quota = estimate.quota || 0;
-    const percentage = quota > 0 ? (used / quota) * 100 : 0;
-
-    return {
-      used,
-      available: quota - used,
-      percentage,
-    };
-  }
-
-  // Fallback: calculate from stored data
+  // 実際に保存されているMIBのサイズを合計（より正確）
   const mibs = await getAllMibs();
   const used = mibs.reduce((acc, mib) => acc + mib.size, 0);
-  const quota = 50 * 1024 * 1024; // Estimate 50MB
+
+  // ブラウザのストレージクォータを取得
+  let quota = 50 * 1024 * 1024; // デフォルト: 50MB
+  if ('storage' in navigator && 'estimate' in navigator.storage) {
+    const estimate = await navigator.storage.estimate();
+    quota = estimate.quota || quota;
+  }
 
   return {
     used,
     available: quota - used,
-    percentage: (used / quota) * 100,
+    percentage: quota > 0 ? (used / quota) * 100 : 0,
   };
 }
 
