@@ -208,37 +208,43 @@ export default function App() {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar - Saved MIBs */}
-        <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
-          <div className="p-4 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Saved MIBs</h2>
-            <FileUploader onUpload={handleUpload} onReload={reload} />
-          </div>
-
-          <div className="flex-1 overflow-y-auto">
-            <SavedMibsList
-              mibs={mibs}
-              activeMibId={null}
-              onSelect={setViewingMib}
-              onDelete={handleDeleteMib}
-              onBulkDelete={handleBulkDelete}
-              onBulkDownload={handleBulkDownload}
-            />
-          </div>
-
-          <StorageManager
-            storageInfo={storageInfo}
-            onClearAll={clearAll}
-          />
-        </aside>
-
-        {/* Resizable Main and Details Panel */}
+        {/* Resizable Sidebar and Main Content */}
         <ResizablePanel
-          storageKey="mib-browser-panel-width"
-          defaultLeftWidth={65}
-          minLeftWidth={30}
-          maxLeftWidth={85}
+          storageKey="mib-browser-sidebar-width"
+          defaultLeftWidth={25}
+          minLeftWidth={15}
+          maxLeftWidth={40}
           leftPanel={
+            <aside className="bg-white border-r border-gray-200 flex flex-col h-full">
+              <div className="p-4 border-b border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-800 mb-4">Saved MIBs</h2>
+                <FileUploader onUpload={handleUpload} onReload={reload} />
+              </div>
+
+              <div className="flex-1 overflow-y-auto">
+                <SavedMibsList
+                  mibs={mibs}
+                  activeMibId={null}
+                  onSelect={setViewingMib}
+                  onDelete={handleDeleteMib}
+                  onBulkDelete={handleBulkDelete}
+                  onBulkDownload={handleBulkDownload}
+                />
+              </div>
+
+              <StorageManager
+                storageInfo={storageInfo}
+                onClearAll={clearAll}
+              />
+            </aside>
+          }
+          rightPanel={
+            <ResizablePanel
+              storageKey="mib-browser-panel-width"
+              defaultLeftWidth={65}
+              minLeftWidth={30}
+              maxLeftWidth={85}
+              leftPanel={
             <main className="flex-1 flex flex-col bg-white h-full">
               <div className="p-4 border-b border-gray-200">
                 <div className="flex items-center justify-between mb-3">
@@ -282,6 +288,8 @@ export default function App() {
               </div>
               <NodeDetails node={selectedNode} onSelectNode={setSelectedNode} mibs={mibs} onViewMib={setViewingMib} tree={mergedTree} />
             </aside>
+          }
+            />
           }
         />
       </div>
