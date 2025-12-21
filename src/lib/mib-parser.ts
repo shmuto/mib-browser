@@ -164,24 +164,28 @@ function removeComments(content: string): string {
 function extractOidAssignments(content: string): Array<{ name: string; oid: string; description?: string; type?: string }> {
   const assignments: Array<{ name: string; oid: string; description?: string; type?: string }> = [];
 
-  // パターン1: identifier OBJECT IDENTIFIER ::= { parent child }
-  const pattern1 = /(\w+)\s+OBJECT\s+IDENTIFIER\s*::=\s*\{\s*([\w\-]+)\s+(\d+)\s*\}/gi;
+  // パターン1: identifier OBJECT IDENTIFIER ::= { parent child1 child2 ... }
+  // 複数の番号に対応（例: { aristaProducts 3011 7124 3282 }）
+  const pattern1 = /(\w+)\s+OBJECT\s+IDENTIFIER\s*::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gi;
 
   let match;
   while ((match = pattern1.exec(content)) !== null) {
     const name = match[1];
     const parent = match[2];
-    const child = match[3];
+    const childNumbers = match[3].trim().split(/\s+/); // 複数の番号をスペースで分割
+
+    // 親OIDに全ての子番号を追加
+    const oid = `${parent}.${childNumbers.join('.')}`;
 
     assignments.push({
       name,
-      oid: `${parent}.${child}`, // 相対OID（後で解決）
+      oid, // 相対OID（後で解決）
     });
   }
 
-  // パターン2: identifier MODULE-IDENTITY ... ::= { parent child }
+  // パターン2: identifier MODULE-IDENTITY ... ::= { parent child1 child2 ... }
   // IMPORTSブロックを除外するため、より厳密なパターンを使用
-  const pattern2 = /^(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+(\d+)\s*\}/gim;
+  const pattern2 = /^(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
 
   while ((match = pattern2.exec(content)) !== null) {
     const name = match[1];
@@ -189,16 +193,19 @@ function extractOidAssignments(content: string): Array<{ name: string; oid: stri
     if (name === 'IMPORTS') continue;
 
     const parent = match[2];
-    const child = match[3];
+    const childNumbers = match[3].trim().split(/\s+/); // 複数の番号をスペースで分割
 
     // DESCRIPTIONを抽出
     const fullMatch = match[0];
     const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
 
+    // 親OIDに全ての子番号を追加
+    const oid = `${parent}.${childNumbers.join('.')}`;
+
     assignments.push({
       name,
-      oid: `${parent}.${child}`, // 相対OID（後で解決）
+      oid, // 相対OID（後で解決）
       description,
       type: 'MODULE-IDENTITY',
     });
@@ -228,6 +235,8 @@ function extractOidAssignments(content: string): Array<{ name: string; oid: stri
     // Arista Networks (enterprise 30065)
     { name: 'arista', oid: '1.3.6.1.4.1.30065' },
     { name: 'aristaMibs', oid: '1.3.6.1.4.1.30065.1' },
+    { name: 'aristaModules', oid: '1.3.6.1.4.1.30065.1' },
+    { name: 'aristaProducts', oid: '1.3.6.1.4.1.30065.2' },
   ];
 
   const oidMap = new Map<string, string>();
