@@ -13,10 +13,75 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
 
   const processUpload = useCallback(async (file: File, skipReload = false) => {
     const result = await onUpload(file, true, skipReload);
+    return { file, result };
+  }, [onUpload]);
 
-    if (result.success) {
-      if (result.conflicts && result.conflicts.length > 0) {
-        toast(`⚠ ${file.name}: Conflicts detected`, {
+  const processRemainingFiles = useCallback(async (files: File[]): Promise<Array<{ file: File; result: UploadResult }>> => {
+    if (files.length === 0) {
+      return [];
+    }
+
+    const [nextFile, ...rest] = files;
+
+    // 残りのファイルがある場合はskipReloadを有効にする
+    const skipReload = rest.length > 0;
+    const uploadResult = await processUpload(nextFile, skipReload);
+
+    // 次のファイルを処理
+    const remainingResults = await processRemainingFiles(rest);
+    return [uploadResult, ...remainingResults];
+  }, [processUpload]);
+
+  const showUploadSummary = useCallback((results: Array<{ file: File; result: UploadResult }>) => {
+    if (results.length === 0) return;
+
+    let successCount = 0;
+    let conflictCount = 0;
+    let failureCount = 0;
+
+    results.forEach(({ result }) => {
+      if (result.success) {
+        if (result.conflicts && result.conflicts.length > 0) {
+          conflictCount++;
+        } else {
+          successCount++;
+        }
+      } else {
+        failureCount++;
+      }
+    });
+
+    if (results.length === 1) {
+      // 単一ファイルの場合は個別にメッセージを表示
+      const { file, result } = results[0];
+      if (result.success) {
+        if (result.conflicts && result.conflicts.length > 0) {
+          toast(`⚠ ${file.name}: Conflicts detected`, {
+            icon: '⚠️',
+            style: {
+              background: '#fef3c7',
+              color: '#92400e',
+            },
+          });
+        } else {
+          toast.success(`✓ ${file.name} uploaded successfully`);
+        }
+      } else {
+        toast.error(`✗ Failed to upload ${file.name}: ${result.error || 'Unknown error'}`);
+      }
+    } else {
+      // 複数ファイルの場合はサマリーを表示
+      const parts: string[] = [];
+      if (successCount > 0) parts.push(`${successCount} uploaded`);
+      if (conflictCount > 0) parts.push(`${conflictCount} with conflicts`);
+      if (failureCount > 0) parts.push(`${failureCount} failed`);
+
+      const message = `✓ ${parts.join(', ')}`;
+
+      if (failureCount > 0) {
+        toast.error(message);
+      } else if (conflictCount > 0) {
+        toast(message, {
           icon: '⚠️',
           style: {
             background: '#fef3c7',
@@ -24,33 +89,10 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
           },
         });
       } else {
-        toast.success(`✓ ${file.name} uploaded successfully`);
+        toast.success(message);
       }
-      return true;
-    } else {
-      toast.error(`✗ Failed to upload ${file.name}: ${result.error || 'Unknown error'}`);
-      return false;
     }
-  }, [onUpload]);
-
-  const processRemainingFiles = useCallback(async (files: File[]) => {
-    if (files.length === 0) {
-      // すべてのファイルの処理が完了したら、一度だけリロード
-      if (onReload) {
-        await onReload();
-      }
-      return;
-    }
-
-    const [nextFile, ...rest] = files;
-
-    // 残りのファイルがある場合はskipReloadを有効にする
-    const skipReload = rest.length > 0;
-    await processUpload(nextFile, skipReload);
-
-    // 次のファイルを処理
-    await processRemainingFiles(rest);
-  }, [processUpload, onReload]);
+  }, []);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -68,15 +110,23 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
 
     // 残りのファイルがある場合は skipReload を有効にする
     const skipReload = rest.length > 0;
-    await processUpload(firstFile, skipReload);
+    const firstResult = await processUpload(firstFile, skipReload);
+
+    let allResults = [firstResult];
 
     if (rest.length > 0) {
-      await processRemainingFiles(rest);
-    } else if (onReload) {
-      // 単一ファイルの場合も明示的にリロード
+      const remainingResults = await processRemainingFiles(rest);
+      allResults = [...allResults, ...remainingResults];
+    }
+
+    // リロードを実行
+    if (onReload) {
       await onReload();
     }
-  }, [processUpload, processRemainingFiles, onReload]);
+
+    // サマリーを表示
+    showUploadSummary(allResults);
+  }, [processUpload, processRemainingFiles, onReload, showUploadSummary]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -97,15 +147,23 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
 
     // 残りのファイルがある場合は skipReload を有効にする
     const skipReload = rest.length > 0;
-    await processUpload(firstFile, skipReload);
+    const firstResult = await processUpload(firstFile, skipReload);
+
+    let allResults = [firstResult];
 
     if (rest.length > 0) {
-      await processRemainingFiles(rest);
-    } else if (onReload) {
-      // 単一ファイルの場合も明示的にリロード
+      const remainingResults = await processRemainingFiles(rest);
+      allResults = [...allResults, ...remainingResults];
+    }
+
+    // リロードを実行
+    if (onReload) {
       await onReload();
     }
-  }, [processUpload, processRemainingFiles, onReload]);
+
+    // サマリーを表示
+    showUploadSummary(allResults);
+  }, [processUpload, processRemainingFiles, onReload, showUploadSummary]);
 
   const handleButtonClick = useCallback(() => {
     fileInputRef.current?.click();

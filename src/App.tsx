@@ -28,8 +28,6 @@ export default function App() {
     uploadMib,
     removeMib,
     removeMibs,
-    exportData,
-    importData,
     clearAll,
     reload,
   } = useMibStorage();
@@ -230,8 +228,6 @@ export default function App() {
 
           <StorageManager
             storageInfo={storageInfo}
-            onExport={exportData}
-            onImport={importData}
             onClearAll={clearAll}
           />
         </aside>
