@@ -28,3 +28,4 @@ github-issues
 *.njsproj
 *.sln
 *.sw?
+tmp

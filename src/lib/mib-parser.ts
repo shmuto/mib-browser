@@ -46,6 +46,20 @@ export function parseMibFile(
     // コメントを削除
     let cleanedContent = removeComments(content);
 
+    // IMPORTSブロックを解析して、インポートされた識別子を取得
+    const imports = extractImports(cleanedContent);
+
+    // インポートされた識別子のOIDをexternalOidMapから解決
+    if (externalOidMap) {
+      imports.forEach((_sourceMib, identifier) => {
+        // externalOidMapから識別子のOIDを検索
+        const resolvedOid = externalOidMap.get(identifier);
+        if (resolvedOid) {
+          oidMap.set(identifier, resolvedOid);
+        }
+      });
+    }
+
     // IMPORTSブロックを削除（パース干渉を防ぐため）
     cleanedContent = cleanedContent.replace(/IMPORTS[\s\S]*?;/gi, '');
 
@@ -159,6 +173,53 @@ export function buildTree(flatNodes: FlatMibNode[]): MibNode[] {
   });
 
   return rootNodes;
+}
+
+/**
+ * IMPORTSブロックから識別子とソースMIBを抽出
+ * @param content MIBファイルの内容
+ * @returns インポートされた識別子とそのソースMIB名のマップ
+ */
+function extractImports(content: string): Map<string, string> {
+  const imports = new Map<string, string>();
+
+  // IMPORTSブロックを見つける
+  const importsMatch = content.match(/IMPORTS([\s\S]*?);/i);
+  if (!importsMatch) return imports;
+
+  const importsBlock = importsMatch[1];
+
+  // "FROM module-name" のパターンで分割
+  // 例: "aristaProducts FROM ARISTA-SMI-MIB"
+  const fromPattern = /FROM\s+([\w\-]+)/gi;
+
+  // FROM の位置を特定し、その前の識別子とセットにする
+  let currentPos = 0;
+  let match;
+
+  while ((match = fromPattern.exec(importsBlock)) !== null) {
+    const moduleName = match[1];
+    const endPos = match.index;
+
+    // 前回のFROMの終わりから今回のFROMの前までの部分を取得
+    const identifiersText = importsBlock.substring(currentPos, endPos);
+
+    // 識別子を抽出（カンマと改行で分割、空白を除去）
+    const identifiers = identifiersText
+      .split(/[,\n]/)
+      .map(id => id.trim())
+      .filter(id => id && id !== 'FROM' && !/^[\s\n]*$/.test(id));
+
+    // 各識別子にソースMIB名を関連付け
+    identifiers.forEach(identifier => {
+      imports.set(identifier, moduleName);
+    });
+
+    // 次の検索開始位置を更新（FROM module-nameの後）
+    currentPos = match.index + match[0].length;
+  }
+
+  return imports;
 }
 
 /**
