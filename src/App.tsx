@@ -284,7 +284,7 @@ export default function App() {
               <div className="p-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-800">Node Details</h2>
               </div>
-              <NodeDetails node={selectedNode} onSelectNode={setSelectedNode} mibs={mibs} onViewMib={setViewingMib} />
+              <NodeDetails node={selectedNode} onSelectNode={setSelectedNode} mibs={mibs} onViewMib={setViewingMib} tree={mergedTree} />
             </aside>
           }
         />

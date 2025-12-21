@@ -2,15 +2,17 @@ import { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { MibNode, StoredMibData } from '../types/mib';
+import OidBreadcrumb from './OidBreadcrumb';
 
 interface NodeDetailsProps {
   node: MibNode | null;
   onSelectNode?: (node: MibNode) => void;
   mibs: StoredMibData[];
   onViewMib?: (mib: StoredMibData) => void;
+  tree: MibNode[];
 }
 
-export default function NodeDetails({ node, onSelectNode, mibs, onViewMib }: NodeDetailsProps) {
+export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree }: NodeDetailsProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const copyToClipboard = async (text: string, fieldName: string) => {
@@ -85,6 +87,11 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib }: Nod
 
   return (
     <div className="p-4 overflow-y-auto h-full">
+      {/* OID Breadcrumb */}
+      {onSelectNode && (
+        <OidBreadcrumb node={node} tree={tree} onNavigate={onSelectNode} />
+      )}
+
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-gray-800 flex items-center">
           {node.name}
