@@ -113,7 +113,7 @@ export default function TreeNode({
       <div
         className={`flex items-center gap-2 py-1 px-2 cursor-pointer hover:bg-gray-100 rounded ${
           isSelected ? 'bg-blue-100 hover:bg-blue-200' : ''
-        } ${isMatch ? 'bg-yellow-50' : ''}`}
+        } ${isMatch ? 'bg-yellow-200 font-semibold' : ''}`}
         style={{ paddingLeft: `${level * 16 + 8}px` }}
         onClick={handleClick}
       >

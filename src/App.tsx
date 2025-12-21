@@ -60,6 +60,19 @@ export default function App() {
     return filterTreeByQuery(mergedTree, searchQuery);
   }, [mergedTree, searchQuery]);
 
+  // Count total nodes in filtered tree
+  const searchResultCount = useMemo(() => {
+    if (!searchQuery) return undefined;
+
+    const countNodes = (nodes: MibNode[]): number => {
+      return nodes.reduce((count, node) => {
+        return count + 1 + countNodes(node.children);
+      }, 0);
+    };
+
+    return countNodes(filteredTree);
+  }, [filteredTree, searchQuery]);
+
   const handleDeleteMib = useCallback(async (id: string) => {
     const mib = mibs.find(m => m.id === id);
     await removeMib(id);
@@ -243,7 +256,7 @@ export default function App() {
                   )}
                 </div>
                 <div className="mb-3">
-                  <SearchBar onSearch={setSearchQuery} />
+                  <SearchBar onSearch={setSearchQuery} resultCount={searchResultCount} />
                 </div>
                 <TreeExpandControls
                   onExpandAll={handleExpandAll}
