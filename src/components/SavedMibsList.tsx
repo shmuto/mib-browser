@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { StoredMibData } from '../types/mib';
-import { FileText, Trash2, Download, CheckSquare, Square, AlertTriangle } from 'lucide-react';
+import { FileText, Trash2, Download, CheckSquare, Square } from 'lucide-react';
 import { formatFileSize } from '../lib/storage';
 
 interface SavedMibsListProps {
@@ -21,7 +21,6 @@ export default function SavedMibsList({
   onBulkDownload
 }: SavedMibsListProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [showingConflicts, setShowingConflicts] = useState<string | null>(null);
 
   const toggleSelection = useCallback((id: string, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -144,25 +143,10 @@ export default function SavedMibsList({
                   onClick={() => onSelect(mib)}
                 >
                   <FileText size={14} className="text-blue-500 flex-shrink-0" />
-                  {mib.conflicts && mib.conflicts.length > 0 && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowingConflicts(showingConflicts === mib.id ? null : mib.id);
-                      }}
-                      className="flex-shrink-0"
-                      title={`${mib.conflicts.length} conflict(s)`}
-                    >
-                      <AlertTriangle size={14} className="text-yellow-500" />
-                    </button>
-                  )}
                   <div className="flex-1 min-w-0">
                     <h4 className="text-xs font-medium text-gray-800 truncate">{mib.fileName}</h4>
                     <p className="text-xs text-gray-500 mt-0.5">
                       {formatFileSize(mib.size)} • {mib.parsedData.length} nodes
-                      {mib.conflicts && mib.conflicts.length > 0 && (
-                        <span className="text-yellow-600 ml-1">• {mib.conflicts.length} conflict(s)</span>
-                      )}
                     </p>
                   </div>
                 </div>
@@ -181,49 +165,6 @@ export default function SavedMibsList({
                   <Trash2 size={14} />
                 </button>
               </div>
-
-              {/* Conflict Details */}
-              {showingConflicts === mib.id && mib.conflicts && mib.conflicts.length > 0 && (
-                <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
-                  <h5 className="font-semibold text-yellow-800 mb-2">Conflicts Detected:</h5>
-                  <div className="space-y-2 max-h-40 overflow-y-auto">
-                    {mib.conflicts.map((conflict, index) => (
-                      <div key={index} className="bg-white p-2 rounded border border-yellow-100">
-                        <div className="font-medium text-gray-800">
-                          {conflict.name} ({conflict.oid})
-                        </div>
-                        <div className="text-gray-600 mt-1">
-                          Conflicts with: <span className="font-medium">{conflict.existingFile}</span>
-                        </div>
-                        {conflict.differences.length > 0 && (
-                          <div className="mt-1 text-gray-500">
-                            {conflict.differences.length} difference(s)
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-2 pt-2 border-t border-yellow-200 flex gap-2">
-                    <button
-                      onClick={async () => {
-                        if (confirm(`Delete ${mib.fileName}? This will resolve the conflicts.`)) {
-                          await onDelete(mib.id);
-                          setShowingConflicts(null);
-                        }
-                      }}
-                      className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600 transition-colors"
-                    >
-                      Delete This File
-                    </button>
-                    <button
-                      onClick={() => setShowingConflicts(null)}
-                      className="px-2 py-1 bg-gray-300 text-gray-700 rounded text-xs hover:bg-gray-400 transition-colors"
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           );
         })}

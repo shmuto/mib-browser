@@ -15,6 +15,7 @@ import StorageManager from './components/StorageManager';
 import TreeExpandControls from './components/TreeExpandControls';
 import MibContentModal from './components/MibContentModal';
 import ResizablePanel from './components/ResizablePanel';
+import ConflictNotificationPanel from './components/ConflictNotificationPanel';
 import { Database } from 'lucide-react';
 import { SiGithub } from 'react-icons/si';
 
@@ -176,6 +177,9 @@ export default function App() {
           </a>
         </div>
       </header>
+
+      {/* Conflict Notification Panel */}
+      <ConflictNotificationPanel mibs={mibs} onDeleteFile={removeMib} />
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
