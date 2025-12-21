@@ -47,8 +47,8 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
 
         if (pairConflicts.length > 0) {
           pairs.push({
-            file1: mib,
-            file2: otherMib,
+            file1: otherMib,  // 既存のファイル (existingValue に対応)
+            file2: mib,       // 新しいファイル (newValue に対応)
             conflicts: pairConflicts,
           });
         }
