@@ -1,7 +1,10 @@
 import { useState, useCallback, useMemo } from 'react';
 import type { StoredMibData } from '../types/mib';
-import { FileText, Trash2, Download, CheckSquare, Square, Search, X } from 'lucide-react';
+import { FileText, Trash2, Download, CheckSquare, Square, Search, X, ArrowUpDown } from 'lucide-react';
 import { formatFileSize } from '../lib/storage';
+
+type SortField = 'name' | 'uploadedAt' | 'size';
+type SortOrder = 'asc' | 'desc';
 
 interface SavedMibsListProps {
   mibs: StoredMibData[];
@@ -22,6 +25,8 @@ export default function SavedMibsList({
 }: SavedMibsListProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortField, setSortField] = useState<SortField>('uploadedAt');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   const toggleSelection = useCallback((id: string, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -36,16 +41,40 @@ export default function SavedMibsList({
     });
   }, []);
 
-  // Filter MIBs by search query
+  // Filter and sort MIBs
   const filteredMibs = useMemo(() => {
-    if (!searchQuery.trim()) return mibs;
+    let result = mibs;
 
-    const query = searchQuery.toLowerCase();
-    return mibs.filter(mib =>
-      mib.fileName.toLowerCase().includes(query) ||
-      (mib.mibName && mib.mibName.toLowerCase().includes(query))
-    );
-  }, [mibs, searchQuery]);
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(mib =>
+        mib.fileName.toLowerCase().includes(query) ||
+        (mib.mibName && mib.mibName.toLowerCase().includes(query))
+      );
+    }
+
+    // Apply sorting
+    result = [...result].sort((a, b) => {
+      let comparison = 0;
+
+      switch (sortField) {
+        case 'name':
+          comparison = a.fileName.localeCompare(b.fileName);
+          break;
+        case 'uploadedAt':
+          comparison = a.uploadedAt - b.uploadedAt;
+          break;
+        case 'size':
+          comparison = a.size - b.size;
+          break;
+      }
+
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    return result;
+  }, [mibs, searchQuery, sortField, sortOrder]);
 
   const toggleSelectAll = useCallback(() => {
     if (selectedIds.size === filteredMibs.length && filteredMibs.length > 0) {
@@ -118,6 +147,27 @@ export default function SavedMibsList({
             {filteredMibs.length} of {mibs.length} file(s)
           </p>
         )}
+
+        {/* Sort Controls */}
+        <div className="flex items-center gap-2 mt-2">
+          <ArrowUpDown size={12} className="text-gray-400" />
+          <select
+            value={sortField}
+            onChange={(e) => setSortField(e.target.value as SortField)}
+            className="flex-1 text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:border-blue-500"
+          >
+            <option value="uploadedAt">Date</option>
+            <option value="name">Name</option>
+            <option value="size">Size</option>
+          </select>
+          <button
+            onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+            className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-100 transition-colors"
+            title={sortOrder === 'asc' ? 'Ascending' : 'Descending'}
+          >
+            {sortOrder === 'asc' ? '↑' : '↓'}
+          </button>
+        </div>
       </div>
 
       {/* Bulk Action Bar */}
