@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { Copy, Check } from 'lucide-react';
 import type { MibNode, StoredMibData } from '../types/mib';
 
 interface NodeDetailsProps {
@@ -8,6 +10,18 @@ interface NodeDetailsProps {
 }
 
 export default function NodeDetails({ node, onSelectNode, mibs, onViewMib }: NodeDetailsProps) {
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const copyToClipboard = async (text: string, fieldName: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
   if (!node) {
     return (
       <div className="h-full flex items-center justify-center text-gray-400">
@@ -38,17 +52,63 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib }: Nod
   const sourceMib = findSourceMib(node.oid);
   const mibNotation = node.mibName ? `${node.mibName}::${node.name}` : null;
 
+  const copyAllDetails = () => {
+    const details = [
+      `Name: ${node.name}`,
+      `OID: ${node.oid}`,
+      mibNotation ? `Notation: ${mibNotation}` : '',
+      `Type: ${node.type}`,
+      node.syntax ? `Syntax: ${node.syntax}` : '',
+      node.access ? `Access: ${node.access}` : '',
+      node.status ? `Status: ${node.status}` : '',
+      node.description ? `Description: ${node.description}` : '',
+    ].filter(Boolean).join('\n');
+
+    copyToClipboard(details, 'all');
+  };
+
+  const CopyButton = ({ fieldName, text }: { fieldName: string; text: string }) => {
+    const isCopied = copiedField === fieldName;
+    return (
+      <button
+        onClick={() => copyToClipboard(text, fieldName)}
+        className="ml-2 p-1 hover:bg-gray-100 rounded transition-colors text-gray-500 hover:text-gray-700"
+        title="Copy to clipboard"
+      >
+        {isCopied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+      </button>
+    );
+  };
+
   return (
     <div className="p-4 overflow-y-auto h-full">
-      <h3 className="text-lg font-semibold mb-4 text-gray-800">{node.name}</h3>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-gray-800 flex items-center">
+          {node.name}
+          <CopyButton fieldName="name" text={node.name} />
+        </h3>
+        <button
+          onClick={copyAllDetails}
+          className="px-3 py-1.5 bg-blue-500 text-white rounded text-sm font-medium hover:bg-blue-600 transition-colors flex items-center gap-1.5"
+        >
+          {copiedField === 'all' ? <Check size={14} /> : <Copy size={14} />}
+          Copy All
+        </button>
+      </div>
 
       <div className="space-y-3">
         <div>
           <dt className="text-sm font-medium text-gray-600 mb-1">OID</dt>
           <dd className="text-sm text-gray-800 font-mono space-y-1">
-            <div className="text-blue-600">{node.oid}</div>
+            <div className="flex items-center text-blue-600">
+              {node.oid}
+              <CopyButton fieldName="oid" text={node.oid} />
+            </div>
             {mibNotation && (
-              <div className="text-gray-600 text-xs">{mibNotation}</div>
+              <div className="flex items-center text-gray-600 text-xs">
+                {mibNotation}
+                <CopyButton fieldName="notation" text={mibNotation} />
+              </div>
             )}
           </dd>
         </div>
