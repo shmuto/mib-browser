@@ -23,13 +23,24 @@ function extractMibName(content: string): string | null {
 /**
  * MIBファイルをパース
  * @param content MIBファイルの内容
+ * @param externalOidMap 他のMIBファイルで定義されたOIDマップ（オプション）
  * @returns パース結果（mibNameを含む）
  */
-export function parseMibFile(content: string): ParseResult & { mibName: string | null } {
+export function parseMibFile(
+  content: string,
+  externalOidMap?: Map<string, string>
+): ParseResult & { mibName: string | null } {
   const errors: ParseError[] = [];
   const nodes: FlatMibNode[] = [];
   const oidMap: Map<string, string> = new Map(); // 名前 -> OID のマッピング
   const mibName = extractMibName(content);
+
+  // 外部OIDマップをマージ（他のMIBファイルで定義されたOID）
+  if (externalOidMap) {
+    externalOidMap.forEach((oid, name) => {
+      oidMap.set(name, oid);
+    });
+  }
 
   try {
     // コメントを削除
@@ -211,18 +222,24 @@ function extractOidAssignments(content: string): Array<{ name: string; oid: stri
     });
   }
 
-  // 既知のルートOIDを追加
+  // 既知のルートOID（SMI標準定義のみ）
+  // ベンダー固有のOIDはハードコードせず、IMPORTS解析で動的に解決する
   const knownRoots: Array<{ name: string; oid: string }> = [
+    // ISO標準ルート
     { name: 'iso', oid: '1' },
     { name: 'org', oid: '1.3' },
     { name: 'dod', oid: '1.3.6' },
     { name: 'internet', oid: '1.3.6.1' },
+
+    // Internet標準ブランチ
     { name: 'directory', oid: '1.3.6.1.1' },
     { name: 'mgmt', oid: '1.3.6.1.2' },
-    { name: 'mib-2', oid: '1.3.6.1.2.1' },
     { name: 'experimental', oid: '1.3.6.1.3' },
     { name: 'private', oid: '1.3.6.1.4' },
     { name: 'enterprises', oid: '1.3.6.1.4.1' },
+
+    // MIB-2標準グループ（RFC 1213）
+    { name: 'mib-2', oid: '1.3.6.1.2.1' },
     { name: 'system', oid: '1.3.6.1.2.1.1' },
     { name: 'interfaces', oid: '1.3.6.1.2.1.2' },
     { name: 'at', oid: '1.3.6.1.2.1.3' },
@@ -232,11 +249,6 @@ function extractOidAssignments(content: string): Array<{ name: string; oid: stri
     { name: 'udp', oid: '1.3.6.1.2.1.7' },
     { name: 'egp', oid: '1.3.6.1.2.1.8' },
     { name: 'snmp', oid: '1.3.6.1.2.1.11' },
-    // Arista Networks (enterprise 30065)
-    { name: 'arista', oid: '1.3.6.1.4.1.30065' },
-    { name: 'aristaMibs', oid: '1.3.6.1.4.1.30065.1' },
-    { name: 'aristaModules', oid: '1.3.6.1.4.1.30065.1' },
-    { name: 'aristaProducts', oid: '1.3.6.1.4.1.30065.2' },
   ];
 
   const oidMap = new Map<string, string>();
@@ -246,6 +258,7 @@ function extractOidAssignments(content: string): Array<{ name: string; oid: stri
 
   // 相対OIDを絶対OIDに解決
   const resolved: Array<{ name: string; oid: string; description?: string; type?: string }> = [];
+  const unresolved: Array<{ name: string; oid: string; description?: string; type?: string }> = [];
   let changed = true;
   const maxIterations = 10;
   let iteration = 0;
@@ -255,16 +268,25 @@ function extractOidAssignments(content: string): Array<{ name: string; oid: stri
     iteration++;
 
     assignments.forEach(({ name, oid, description, type }) => {
-      if (!resolved.find(r => r.name === name)) {
+      if (!resolved.find(r => r.name === name) && !unresolved.find(u => u.name === name)) {
         const resolvedOid = resolveOid(oid, oidMap);
         if (resolvedOid && /^[\d.]+$/.test(resolvedOid)) {
+          // 絶対OIDに解決できた
           oidMap.set(name, resolvedOid);
           resolved.push({ name, oid: resolvedOid, description, type });
           changed = true;
+        } else if (iteration === maxIterations) {
+          // 最終イテレーションで解決できなかった相対OIDを保持
+          unresolved.push({ name, oid, description, type });
         }
       }
     });
   }
+
+  // 解決できなかった相対OIDも追加（他のMIBファイルで解決される可能性がある）
+  unresolved.forEach(item => {
+    resolved.push(item);
+  });
 
   // 既知のルートも追加
   knownRoots.forEach(root => {

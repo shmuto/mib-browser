@@ -113,13 +113,39 @@ export function useMibStorage() {
     return conflicts;
   }, []);
 
+  // 既存のMIBファイルからグローバルOIDマップを構築
+  const buildGlobalOidMap = useCallback((mibs: StoredMibData[]): Map<string, string> => {
+    const oidMap = new Map<string, string>();
+
+    const addNodeToMap = (node: MibNode) => {
+      // OBJECT IDENTIFIERとMODULE-IDENTITYの定義をマップに追加
+      if (node.type === 'OBJECT IDENTIFIER' || node.type === 'MODULE-IDENTITY') {
+        oidMap.set(node.name, node.oid);
+      }
+      // 子ノードも処理
+      node.children.forEach(addNodeToMap);
+    };
+
+    mibs.forEach(mib => {
+      mib.parsedData.forEach(addNodeToMap);
+    });
+
+    return oidMap;
+  }, []);
+
   // MIBファイルをアップロード
   const uploadMib = useCallback(async (file: File, _forceUpload = false, skipReload = false): Promise<UploadResult> => {
     try {
       const content = await file.text();
 
-      // パース
-      const parseResult = parseMibFile(content);
+      // 既存MIBを取得
+      const existingMibs = await getAllMibs();
+
+      // グローバルOIDマップを構築
+      const globalOidMap = buildGlobalOidMap(existingMibs);
+
+      // パース（グローバルOIDマップを渡す）
+      const parseResult = parseMibFile(content, globalOidMap);
 
       if (!parseResult.success || parseResult.nodes.length === 0) {
         console.error('Parse failed:', parseResult.errors);
@@ -131,9 +157,6 @@ export function useMibStorage() {
 
       // ツリーを構築
       const tree = buildTree(parseResult.nodes);
-
-      // 既存MIBを取得
-      const existingMibs = await getAllMibs();
       const existingMib = existingMibs.find(mib => mib.fileName === file.name);
 
       // 競合検出（同じファイル名でない既存MIBとの競合をチェック）
