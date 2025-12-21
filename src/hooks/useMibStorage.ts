@@ -114,7 +114,7 @@ export function useMibStorage() {
   }, []);
 
   // MIBファイルをアップロード
-  const uploadMib = useCallback(async (file: File, forceUpload = false, skipReload = false): Promise<UploadResult> => {
+  const uploadMib = useCallback(async (file: File, _forceUpload = false, skipReload = false): Promise<UploadResult> => {
     try {
       const content = await file.text();
 
@@ -140,15 +140,7 @@ export function useMibStorage() {
       const otherMibs = existingMibs.filter(mib => mib.fileName !== file.name);
       const conflicts = detectConflicts(tree, file.name, otherMibs);
 
-      // 競合があり、強制アップロードでない場合は警告を返す
-      if (conflicts.length > 0 && !forceUpload) {
-        return {
-          success: false,
-          conflicts,
-        };
-      }
-
-      // ストレージに保存
+      // 競合があってもアップロードし、競合情報を保存
       const mibData: StoredMibData = {
         id: existingMib ? existingMib.id : generateId(), // 既存があればそのIDを再利用
         fileName: file.name,
@@ -158,6 +150,7 @@ export function useMibStorage() {
         lastAccessedAt: Date.now(),
         size: file.size,
         mibName: parseResult.mibName || undefined,
+        conflicts: conflicts.length > 0 ? conflicts : undefined, // 競合情報を保存
       };
 
       await saveMib(mibData);

@@ -36,6 +36,7 @@ export interface StoredMibData {
   lastAccessedAt: number;   // Last access timestamp
   size: number;             // File size (bytes)
   mibName?: string;         // MIB module name (e.g., "IF-MIB")
+  conflicts?: MibConflict[]; // Conflicts with other MIBs (if any)
 }
 
 // Application state
