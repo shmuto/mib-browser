@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import type { StoredMibData } from '../types/mib';
-import { FileText, Trash2, Download, CheckSquare, Square } from 'lucide-react';
+import { FileText, Trash2, Download, CheckSquare, Square, Search, X } from 'lucide-react';
 import { formatFileSize } from '../lib/storage';
 
 interface SavedMibsListProps {
@@ -21,6 +21,7 @@ export default function SavedMibsList({
   onBulkDownload
 }: SavedMibsListProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
 
   const toggleSelection = useCallback((id: string, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -35,13 +36,24 @@ export default function SavedMibsList({
     });
   }, []);
 
+  // Filter MIBs by search query
+  const filteredMibs = useMemo(() => {
+    if (!searchQuery.trim()) return mibs;
+
+    const query = searchQuery.toLowerCase();
+    return mibs.filter(mib =>
+      mib.fileName.toLowerCase().includes(query) ||
+      (mib.mibName && mib.mibName.toLowerCase().includes(query))
+    );
+  }, [mibs, searchQuery]);
+
   const toggleSelectAll = useCallback(() => {
-    if (selectedIds.size === mibs.length) {
+    if (selectedIds.size === filteredMibs.length && filteredMibs.length > 0) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(mibs.map(m => m.id)));
+      setSelectedIds(new Set(filteredMibs.map(m => m.id)));
     }
-  }, [selectedIds.size, mibs]);
+  }, [selectedIds.size, filteredMibs]);
 
   const handleBulkDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -76,11 +88,38 @@ export default function SavedMibsList({
     );
   }
 
-  const allSelected = selectedIds.size === mibs.length && mibs.length > 0;
+  const allSelected = selectedIds.size === filteredMibs.length && filteredMibs.length > 0;
   const someSelected = selectedIds.size > 0;
 
   return (
     <div className="flex flex-col h-full">
+      {/* Search Bar */}
+      <div className="p-2 bg-gray-50 border-b border-gray-200">
+        <div className="relative">
+          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search files..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-8 pr-8 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+        {searchQuery && (
+          <p className="text-xs text-gray-500 mt-1">
+            {filteredMibs.length} of {mibs.length} file(s)
+          </p>
+        )}
+      </div>
+
       {/* Bulk Action Bar */}
       {someSelected && (
         <div className="p-2 bg-blue-50 border-b border-blue-200 flex items-center justify-between gap-2">
@@ -119,7 +158,12 @@ export default function SavedMibsList({
 
       {/* File List */}
       <div className="flex-1 overflow-y-auto divide-y divide-gray-200">
-        {mibs.map(mib => {
+        {filteredMibs.length === 0 ? (
+          <div className="p-4 text-center text-gray-400">
+            <p className="text-sm">No files match your search</p>
+          </div>
+        ) : (
+          filteredMibs.map(mib => {
           const isSelected = selectedIds.has(mib.id);
           return (
             <div
@@ -167,7 +211,8 @@ export default function SavedMibsList({
               </div>
             </div>
           );
-        })}
+        })
+        )}
       </div>
     </div>
   );
