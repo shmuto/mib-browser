@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
+import toast from 'react-hot-toast';
 import type { MibNode, StoredMibData } from '../types/mib';
 
 interface NodeDetailsProps {
@@ -17,8 +18,10 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib }: Nod
       await navigator.clipboard.writeText(text);
       setCopiedField(fieldName);
       setTimeout(() => setCopiedField(null), 2000);
+      toast.success('✓ Copied to clipboard');
     } catch (err) {
       console.error('Failed to copy:', err);
+      toast.error('✗ Failed to copy');
     }
   };
 

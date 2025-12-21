@@ -4,6 +4,7 @@ import { useMibStorage } from './hooks/useMibStorage';
 import { filterTreeByQuery } from './lib/mib-parser';
 import { mergeMibs } from './lib/mib-merger';
 import { getOidPath } from './lib/oid-utils';
+import toast, { Toaster } from 'react-hot-toast';
 
 // Components
 import FileUploader from './components/FileUploader';
@@ -60,14 +61,27 @@ export default function App() {
   }, [mergedTree, searchQuery]);
 
   const handleDeleteMib = useCallback(async (id: string) => {
+    const mib = mibs.find(m => m.id === id);
     await removeMib(id);
     setSelectedNode(null);
-  }, [removeMib]);
+    if (mib) {
+      toast.success(`✓ ${mib.fileName} deleted`);
+    }
+  }, [removeMib, mibs]);
 
   const handleBulkDelete = useCallback(async (ids: string[]) => {
     await removeMibs(ids);
     setSelectedNode(null);
+    toast.success(`✓ ${ids.length} file(s) deleted`);
   }, [removeMibs]);
+
+  const handleConflictDelete = useCallback(async (id: string) => {
+    const mib = mibs.find(m => m.id === id);
+    await removeMib(id);
+    if (mib) {
+      toast.success(`✓ ${mib.fileName} deleted`);
+    }
+  }, [removeMib, mibs]);
 
   const handleBulkDownload = useCallback((selectedMibs: StoredMibData[]) => {
     selectedMibs.forEach(mib => {
@@ -179,7 +193,7 @@ export default function App() {
       </header>
 
       {/* Conflict Notification Panel */}
-      <ConflictNotificationPanel mibs={mibs} onDeleteFile={removeMib} />
+      <ConflictNotificationPanel mibs={mibs} onDeleteFile={handleConflictDelete} />
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
@@ -265,6 +279,32 @@ export default function App() {
 
       {/* MIB Content Viewer Modal */}
       <MibContentModal mib={viewingMib} onClose={() => setViewingMib(null)} />
+
+      {/* Toast Notifications */}
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 3000,
+          style: {
+            background: '#363636',
+            color: '#fff',
+          },
+          success: {
+            duration: 3000,
+            iconTheme: {
+              primary: '#10b981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            duration: 5000,
+            iconTheme: {
+              primary: '#ef4444',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
     </div>
   );
 }

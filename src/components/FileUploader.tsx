@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { Upload, FileText } from 'lucide-react';
+import toast from 'react-hot-toast';
 import type { UploadResult } from '../types/mib';
 
 interface FileUploaderProps {
@@ -14,10 +15,20 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
     const result = await onUpload(file, true, skipReload);
 
     if (result.success) {
-      console.log(`Uploaded: ${file.name}`);
+      if (result.conflicts && result.conflicts.length > 0) {
+        toast(`⚠ ${file.name}: Conflicts detected`, {
+          icon: '⚠️',
+          style: {
+            background: '#fef3c7',
+            color: '#92400e',
+          },
+        });
+      } else {
+        toast.success(`✓ ${file.name} uploaded successfully`);
+      }
       return true;
     } else {
-      console.error(`Failed to upload: ${file.name}`, result.error);
+      toast.error(`✗ Failed to upload ${file.name}: ${result.error || 'Unknown error'}`);
       return false;
     }
   }, [onUpload]);
