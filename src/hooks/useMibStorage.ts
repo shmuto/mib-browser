@@ -60,7 +60,7 @@ export function useMibStorage() {
       const allMibs = await getAllMibs();
 
       // Step 2: 全てをParsedModule形式に変換
-      const modules = allMibs.map(mib => {
+      const allModules = allMibs.map(mib => {
         try {
           return parseMibModule(mib.content, mib.fileName);
         } catch (error) {
@@ -69,58 +69,94 @@ export function useMibStorage() {
         }
       }).filter((m): m is NonNullable<typeof m> => m !== null);
 
-      // Step 3: MibTreeBuilderでツリー構築
-      const builder = new MibTreeBuilder();
+      // Step 3: MibTreeBuilderでツリー構築（エラー時はリトライ）
       let tree;
-      try {
-        tree = builder.buildTree(modules);
-      } catch (buildError) {
-        // ツリー構築に失敗した場合、不足MIBを特定して該当ファイルにマーク
-        const errorMessage = buildError instanceof Error ? buildError.message : 'Unknown error';
-        const match = errorMessage.match(/Missing MIB dependencies: ([^.]+)/);
+      let modules = [...allModules];
+      const errorFiles = new Set<string>();
+      let lastMissingMibs: string[] = [];
 
-        if (match) {
-          const missingMibs = match[1].split(',').map(s => s.trim());
+      // 最大リトライ回数（依存関係が解決できない場合の無限ループ防止）
+      const maxRetries = 10;
+      let retryCount = 0;
 
-          // 各モジュールのIMPORTS情報を確認し、不足MIBに依存しているファイルを特定
-          for (const mib of allMibs) {
-            const module = modules.find(m => m.fileName === mib.fileName);
-            if (!module) continue;
+      while (retryCount < maxRetries) {
+        const builder = new MibTreeBuilder();
+        try {
+          tree = builder.buildTree(modules);
+          break; // 成功したらループを抜ける
+        } catch (buildError) {
+          // ツリー構築に失敗した場合、不足MIBを特定
+          const errorMessage = buildError instanceof Error ? buildError.message : 'Unknown error';
+          const match = errorMessage.match(/Missing MIB dependencies: ([^.]+)/);
 
-            // このファイルが不足MIBをインポートしているか確認
-            const dependsOnMissing = missingMibs.filter(missingMib =>
-              Array.from(module.imports.values()).includes(missingMib)
-            );
+          if (match) {
+            const missingMibs = match[1].split(',').map(s => s.trim());
 
-            if (dependsOnMissing.length > 0) {
-              mib.error = `Missing MIB dependencies: ${dependsOnMissing.join(', ')}`;
-              mib.missingDependencies = dependsOnMissing;
-            } else {
-              mib.error = undefined;
-              mib.missingDependencies = undefined;
+            // 同じ不足MIBでループしている場合は抜ける
+            if (JSON.stringify(missingMibs.sort()) === JSON.stringify(lastMissingMibs.sort())) {
+              break;
+            }
+            lastMissingMibs = missingMibs;
+
+            // 不足MIBに依存しているモジュールを特定して除外
+            const modulesToRemove: string[] = [];
+            for (const module of modules) {
+              const dependsOnMissing = missingMibs.filter(missingMib =>
+                Array.from(module.imports.values()).includes(missingMib)
+              );
+
+              if (dependsOnMissing.length > 0) {
+                modulesToRemove.push(module.fileName);
+                errorFiles.add(module.fileName);
+
+                // 該当MIBにエラー情報を保存
+                const mib = allMibs.find(m => m.fileName === module.fileName);
+                if (mib) {
+                  mib.error = `Missing MIB dependencies: ${dependsOnMissing.join(', ')}`;
+                  mib.missingDependencies = dependsOnMissing;
+                  mib.parsedData = []; // ツリーは空
+                  await saveMib(mib);
+                }
+              }
             }
 
-            await saveMib(mib);
+            // エラーファイルを除外して再試行
+            if (modulesToRemove.length > 0) {
+              modules = modules.filter(m => !modulesToRemove.includes(m.fileName));
+              retryCount++;
+              continue;
+            }
           }
-        }
 
-        throw buildError;
+          // 他のエラーまたは除外対象がない場合は抜ける
+          break;
+        }
+      }
+
+      // ツリー構築に完全に失敗した場合（モジュールが残っていない場合）
+      if (!tree || modules.length === 0) {
+        // 全てのMIBにエラー情報を保存済み
+        return;
       }
 
       // Step 4: ツリーをフラット化
       const flatTree = flattenTree(tree);
 
-      // Step 5: すべてのMIBに統合ツリー全体を保存
+      // Step 5: エラーなしのMIBに統合ツリー全体を保存
       for (const mib of allMibs) {
-        mib.parsedData = tree;
+        if (!errorFiles.has(mib.fileName)) {
+          mib.parsedData = tree;
+        }
       }
 
       // Step 6: 同じモジュール名のMIBファイルを検出し、ノードレベルで差異を比較
+      // エラーファイルを除外
+      const validMibs = allMibs.filter(mib => !errorFiles.has(mib.fileName));
       const parsedModuleMap = new Map(modules.map(m => [m.fileName, m]));
 
-      // モジュール名ごとにファイルをグループ化
+      // モジュール名ごとにファイルをグループ化（エラーファイルを除外）
       const mibNameMap = new Map<string, StoredMibData[]>();
-      for (const mib of allMibs) {
+      for (const mib of validMibs) {
         if (!mibNameMap.has(mib.mibName!)) {
           mibNameMap.set(mib.mibName!, []);
         }
@@ -131,8 +167,8 @@ export function useMibStorage() {
       const duplicateModules = Array.from(mibNameMap.entries())
         .filter(([_, mibs]) => mibs.length > 1);
 
-      // Step 7: 競合検出と保存
-      for (const mib of allMibs) {
+      // Step 7: 競合検出と保存（エラーファイルを除外）
+      for (const mib of validMibs) {
         const conflicts: MibConflict[] = [];
 
         // 同じモジュール名を持つ他のファイルとノードレベルで比較
