@@ -64,11 +64,8 @@ export function parseMibFile(
     cleanedContent = cleanedContent.replace(/IMPORTS[\s\S]*?;/gi, '');
 
     // OBJECT IDENTIFIER定義を抽出（現在のoidMapを渡して参照できるようにする）
-    console.log(`[parseMibFile] Parsing ${mibName}, oidMap keys:`, Array.from(oidMap.keys()));
     const oidAssignments = extractOidAssignments(cleanedContent, oidMap);
-    console.log(`[parseMibFile] ${mibName}: Found ${oidAssignments.length} OID assignments`);
     oidAssignments.forEach(({ name, oid }) => {
-      console.log(`[parseMibFile] ${mibName}: Adding ${name} = ${oid}`);
       oidMap.set(name, oid);
     });
 
@@ -263,7 +260,7 @@ function extractOidAssignments(
 
   // パターン2: identifier MODULE-IDENTITY ... ::= { parent child1 child2 ... }
   // IMPORTSブロックを除外するため、より厳密なパターンを使用
-  const pattern2 = /^(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
+  const pattern2 = /^\s*(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
 
   while ((match = pattern2.exec(content)) !== null) {
     const name = match[1];
@@ -290,7 +287,7 @@ function extractOidAssignments(
   }
 
   // パターン3: identifier OBJECT-IDENTITY ... ::= { parent child1 child2 ... }
-  const pattern3 = /^(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
+  const pattern3 = /^\s*(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
 
   while ((match = pattern3.exec(content)) !== null) {
     const name = match[1];
@@ -716,7 +713,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 2: identifier MODULE-IDENTITY ... ::= { parent child1 child2 ... }
-  const pattern2 = /^(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
+  const pattern2 = /^\s*(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
 
   while ((match = pattern2.exec(content)) !== null) {
     const name = match[1];
@@ -739,7 +736,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 3: identifier OBJECT-IDENTITY ... ::= { parent child1 child2 ... }
-  const pattern3 = /^(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
+  const pattern3 = /^\s*(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
 
   while ((match = pattern3.exec(content)) !== null) {
     const name = match[1];
