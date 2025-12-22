@@ -14,11 +14,23 @@ import type { FlatMibNode } from '../types/mib';
 export function mergeMibs(mibs: StoredMibData[]): MibNode[] {
   if (mibs.length === 0) return [];
 
-  // Flatten all MIB trees
+  // If all MIBs have the same tree (already merged by rebuildAllTrees),
+  // just return the first one's tree directly
+  if (mibs.length > 0 && mibs[0].parsedData.length > 0) {
+    // Check if this looks like an integrated tree (has root nodes like 'iso')
+    const hasIsoRoot = mibs[0].parsedData.some(node => node.name === 'iso');
+    if (hasIsoRoot) {
+      console.log('[mergeMibs] Using pre-built integrated tree from storage');
+      return mibs[0].parsedData;
+    }
+  }
+
+  // Fallback: merge individual MIB trees (legacy support)
+  console.log('[mergeMibs] Merging individual MIB trees');
   const allNodes: FlatMibNode[] = [];
   const nodeMap = new Map<string, FlatMibNode>();
 
-  mibs.forEach(mib => {
+  mibs.forEach((mib) => {
     const flatNodes = flattenTree(mib.parsedData);
 
     flatNodes.forEach(node => {
