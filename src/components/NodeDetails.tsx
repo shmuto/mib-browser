@@ -35,26 +35,15 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree 
     );
   }
 
-  // Find which MIB file contains this node
-  const findSourceMib = (oid: string): StoredMibData | null => {
-    for (const mib of mibs) {
-      const found = searchInTree(mib.parsedData, oid);
-      if (found) return mib;
-    }
-    return null;
+  // Find which MIB file contains this node by matching mibName
+  const findSourceMib = (mibName?: string): StoredMibData | null => {
+    if (!mibName) return null;
+
+    // Find MIB by matching mibName (module name) with stored MIB's mibName
+    return mibs.find(mib => mib.mibName === mibName) || null;
   };
 
-  const searchInTree = (nodes: MibNode[], targetOid: string): boolean => {
-    for (const node of nodes) {
-      if (node.oid === targetOid) return true;
-      if (node.children.length > 0) {
-        if (searchInTree(node.children, targetOid)) return true;
-      }
-    }
-    return false;
-  };
-
-  const sourceMib = findSourceMib(node.oid);
+  const sourceMib = findSourceMib(node.mibName);
   const mibNotation = node.mibName ? `${node.mibName}::${node.name}` : null;
 
   const copyAllDetails = () => {

@@ -11,6 +11,7 @@ export interface MibNode {
   children: MibNode[];      // Child nodes
   isExpanded?: boolean;     // For tree display: expansion state
   mibName?: string;         // MIB module name (e.g., "IF-MIB")
+  fileName?: string;        // Source file name (e.g., "IF-MIB.txt")
 }
 
 // Flat MIB node (immediately after parsing)
@@ -24,6 +25,7 @@ export interface FlatMibNode {
   status: string;
   description: string;
   mibName?: string;
+  fileName?: string;
 }
 
 // MIB data for storage
@@ -37,6 +39,8 @@ export interface StoredMibData {
   size: number;             // File size (bytes)
   mibName?: string;         // MIB module name (e.g., "IF-MIB")
   conflicts?: MibConflict[]; // Conflicts with other MIBs (if any)
+  error?: string;           // Error message if tree building failed
+  missingDependencies?: string[]; // List of missing MIB dependencies
 }
 
 // Application state
@@ -86,4 +90,34 @@ export interface UploadResult {
   success: boolean;
   conflicts?: MibConflict[];
   error?: string;
+}
+
+// === 3-pass approach type definitions ===
+
+// Parsed module (intermediate representation after parsing, before OID resolution)
+export interface ParsedModule {
+  moduleName: string;
+  fileName: string;             // Source file name
+  imports: Map<string, string>; // { "SymbolName": "SourceModuleName" }
+  objects: RawMibObject[];
+}
+
+// Raw MIB object (parsed but OIDs not yet resolved)
+export interface RawMibObject {
+  name: string;
+  parentName: string;           // Unresolved parent name (e.g., "aristaProducts")
+  subid: number | number[];     // Support for multiple SubIDs
+  type: string;                 // "OBJECT-TYPE" | "OBJECT IDENTIFIER" | "MODULE-IDENTITY" | "OBJECT-IDENTITY"
+  description?: string;
+  syntax?: string;
+  access?: string;
+  status?: string;
+  fileName?: string;            // Source file name
+}
+
+// Tree building node (internal node for tree construction)
+export interface TreeBuildNode extends MibNode {
+  parentName?: string | null;   // Unresolved parent name
+  subid?: number | number[];    // SubID(s)
+  moduleName: string;            // Source module name
 }

@@ -64,8 +64,11 @@ export function parseMibFile(
     cleanedContent = cleanedContent.replace(/IMPORTS[\s\S]*?;/gi, '');
 
     // OBJECT IDENTIFIER定義を抽出（現在のoidMapを渡して参照できるようにする）
+    console.log(`[parseMibFile] Parsing ${mibName}, oidMap keys:`, Array.from(oidMap.keys()));
     const oidAssignments = extractOidAssignments(cleanedContent, oidMap);
+    console.log(`[parseMibFile] ${mibName}: Found ${oidAssignments.length} OID assignments`);
     oidAssignments.forEach(({ name, oid }) => {
+      console.log(`[parseMibFile] ${mibName}: Adding ${name} = ${oid}`);
       oidMap.set(name, oid);
     });
 
@@ -627,4 +630,189 @@ export function flattenTree(tree: MibNode[]): MibNode[] {
 
   flatten(tree);
   return result;
+}
+
+// === 3-pass approach functions ===
+
+/**
+ * Parse MIB file into ParsedModule format (for 3-pass tree building)
+ * Does not resolve OIDs - returns raw parent names and SubIDs
+ * @param content MIB file content
+ * @param fileName Source file name (optional)
+ * @returns ParsedModule
+ */
+export function parseMibModule(content: string, fileName?: string): import('../types/mib').ParsedModule {
+  const mibName = extractMibName(content) || 'UNKNOWN';
+  const cleanedContent = removeComments(content);
+
+  // Extract IMPORTS before removing IMPORTS block
+  const imports = extractImports(cleanedContent);
+
+  // Convert Map<identifier, sourceMib> to Map<identifier, sourceMib> for ParsedModule
+  const importsMap = new Map(
+    Array.from(imports.entries()).map(([identifier, sourceMib]) => [identifier, sourceMib])
+  );
+
+  // Remove IMPORTS block to prevent parsing interference
+  const cleanedWithoutImports = cleanedContent.replace(/IMPORTS[\s\S]*?;/gi, '');
+
+  // Extract OID assignments (OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY)
+  // Pass empty map to prevent OID resolution
+  const oidAssignments = extractOidAssignmentsRaw(cleanedWithoutImports);
+
+  // Extract OBJECT-TYPE definitions
+  const objectTypes = extractObjectTypes(cleanedWithoutImports);
+
+  const objects: import('../types/mib').RawMibObject[] = [];
+
+  // Add OID assignments (OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY)
+  oidAssignments.forEach(({ name, parent, subids, description, type }) => {
+    objects.push({
+      name,
+      parentName: parent,
+      subid: subids.length === 1 ? subids[0] : subids,
+      type: type || 'OBJECT IDENTIFIER',
+      description,
+      fileName,
+    });
+  });
+
+  // Add OBJECT-TYPEs
+  objectTypes.forEach(objType => {
+    const parsed = parseObjectTypeRaw(objType);
+    if (parsed) {
+      objects.push({
+        ...parsed,
+        fileName,
+      });
+    }
+  });
+
+  return {
+    moduleName: mibName,
+    fileName: fileName || '',
+    imports: importsMap,
+    objects,
+  };
+}
+
+/**
+ * Extract OID assignments in raw format (without resolution)
+ * Returns parent name and SubIDs as-is
+ */
+function extractOidAssignmentsRaw(
+  content: string
+): Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string }> {
+  const assignments: Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string }> = [];
+
+  // Pattern 1: identifier OBJECT IDENTIFIER ::= { parent child1 child2 ... }
+  const pattern1 = /(\w+)\s+OBJECT\s+IDENTIFIER\s*::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gi;
+
+  let match;
+  while ((match = pattern1.exec(content)) !== null) {
+    const name = match[1];
+    if (name === 'IMPORTS') continue;
+
+    const parent = match[2];
+    const subids = match[3].trim().split(/\s+/).map(Number);
+
+    assignments.push({
+      name,
+      parent,
+      subids,
+      type: 'OBJECT IDENTIFIER',
+    });
+  }
+
+  // Pattern 2: identifier MODULE-IDENTITY ... ::= { parent child1 child2 ... }
+  const pattern2 = /^(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
+
+  while ((match = pattern2.exec(content)) !== null) {
+    const name = match[1];
+    if (name === 'IMPORTS') continue;
+
+    const parent = match[2];
+    const subids = match[3].trim().split(/\s+/).map(Number);
+
+    const fullMatch = match[0];
+    const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
+    const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
+
+    assignments.push({
+      name,
+      parent,
+      subids,
+      description,
+      type: 'MODULE-IDENTITY',
+    });
+  }
+
+  // Pattern 3: identifier OBJECT-IDENTITY ... ::= { parent child1 child2 ... }
+  const pattern3 = /^(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
+
+  while ((match = pattern3.exec(content)) !== null) {
+    const name = match[1];
+    if (name === 'IMPORTS') continue;
+
+    const parent = match[2];
+    const subids = match[3].trim().split(/\s+/).map(Number);
+
+    const fullMatch = match[0];
+    const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
+    const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
+
+    assignments.push({
+      name,
+      parent,
+      subids,
+      description,
+      type: 'OBJECT-IDENTITY',
+    });
+  }
+
+  return assignments;
+}
+
+/**
+ * Parse OBJECT-TYPE definition in raw format (without OID resolution)
+ * Returns parent name and SubID as-is
+ */
+function parseObjectTypeRaw(content: string): import('../types/mib').RawMibObject | null {
+  const nameMatch = content.match(/^(\w+)\s+OBJECT-TYPE/);
+  if (!nameMatch) return null;
+  const name = nameMatch[1];
+
+  // Extract SYNTAX
+  const syntaxMatch = content.match(/SYNTAX\s+([\w\-\s(){}]+?)(?=\s+(?:UNITS|MAX-ACCESS|ACCESS|STATUS|DESCRIPTION))/i);
+  const syntax = syntaxMatch ? syntaxMatch[1].trim() : '';
+
+  // Extract ACCESS or MAX-ACCESS
+  const accessMatch = content.match(/(?:ACCESS|MAX-ACCESS)\s+([\w\-]+)/i);
+  const access = accessMatch ? accessMatch[1].trim() : '';
+
+  // Extract STATUS
+  const statusMatch = content.match(/STATUS\s+([\w\-]+)/i);
+  const status = statusMatch ? statusMatch[1].trim() : '';
+
+  // Extract DESCRIPTION
+  const descMatch = content.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
+  const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
+
+  // Extract OID assignment (parent name and SubID only, no resolution)
+  const oidMatch = content.match(/::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\s*\}/);
+  if (!oidMatch) return null;
+
+  const parentName = oidMatch[1];
+  const subids = oidMatch[2].trim().split(/\s+/).map(Number);
+
+  return {
+    name,
+    parentName,
+    subid: subids.length === 1 ? subids[0] : subids,
+    type: 'OBJECT-TYPE',
+    syntax,
+    access,
+    status,
+    description,
+  };
 }

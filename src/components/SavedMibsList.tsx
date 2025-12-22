@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import type { StoredMibData } from '../types/mib';
-import { FileText, Trash2, Download, CheckSquare, Square, Search, X } from 'lucide-react';
+import { FileText, Trash2, Download, CheckSquare, Square, Search, X, AlertTriangle } from 'lucide-react';
 import { formatFileSize } from '../lib/storage';
 
 type SortField = 'name' | 'uploadedAt' | 'size';
@@ -256,6 +256,25 @@ export default function SavedMibsList({
                       <div className="flex items-center gap-2">
                         <FileText size={14} className="text-blue-500 flex-shrink-0" />
                         <span className="font-medium text-gray-800 truncate">{mib.fileName}</span>
+                        {mib.error && (
+                          <div className="relative group">
+                            <AlertTriangle size={14} className="text-amber-500 flex-shrink-0" />
+                            <div className="absolute left-0 bottom-full mb-1 hidden group-hover:block z-10 w-64 p-2 bg-gray-900 text-white text-xs rounded shadow-lg">
+                              <p className="font-semibold mb-1">Error:</p>
+                              <p className="mb-2">{mib.error}</p>
+                              {mib.missingDependencies && mib.missingDependencies.length > 0 && (
+                                <>
+                                  <p className="font-semibold mb-1">Missing MIBs:</p>
+                                  <ul className="list-disc list-inside">
+                                    {mib.missingDependencies.map((dep, idx) => (
+                                      <li key={idx}>{dep}</li>
+                                    ))}
+                                  </ul>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </td>
 
