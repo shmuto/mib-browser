@@ -71,7 +71,41 @@ export function useMibStorage() {
 
       // Step 3: MibTreeBuilderでツリー構築
       const builder = new MibTreeBuilder();
-      const tree = builder.buildTree(modules);
+      let tree;
+      try {
+        tree = builder.buildTree(modules);
+      } catch (buildError) {
+        // ツリー構築に失敗した場合、不足MIBを特定して該当ファイルにマーク
+        const errorMessage = buildError instanceof Error ? buildError.message : 'Unknown error';
+        const match = errorMessage.match(/Missing MIB dependencies: ([^.]+)/);
+
+        if (match) {
+          const missingMibs = match[1].split(',').map(s => s.trim());
+
+          // 各モジュールのIMPORTS情報を確認し、不足MIBに依存しているファイルを特定
+          for (const mib of allMibs) {
+            const module = modules.find(m => m.fileName === mib.fileName);
+            if (!module) continue;
+
+            // このファイルが不足MIBをインポートしているか確認
+            const dependsOnMissing = missingMibs.filter(missingMib =>
+              Array.from(module.imports.values()).includes(missingMib)
+            );
+
+            if (dependsOnMissing.length > 0) {
+              mib.error = `Missing MIB dependencies: ${dependsOnMissing.join(', ')}`;
+              mib.missingDependencies = dependsOnMissing;
+            } else {
+              mib.error = undefined;
+              mib.missingDependencies = undefined;
+            }
+
+            await saveMib(mib);
+          }
+        }
+
+        throw buildError;
+      }
 
       // Step 4: ツリーをフラット化
       const flatTree = flattenTree(tree);
@@ -203,24 +237,7 @@ export function useMibStorage() {
           await loadData();
         } catch (error) {
           // rebuildAllTreesでエラーが発生した場合（不足MIBなど）
-          // アップロードしたMIBは保存されているが、ツリーは構築されていない
-
-          // エラー情報を抽出
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          const missingDeps: string[] = [];
-
-          // "Missing MIB dependencies: XXX, YYY" からMIB名を抽出
-          const match = errorMessage.match(/Missing MIB dependencies: ([^.]+)/);
-          if (match) {
-            const depsString = match[1];
-            missingDeps.push(...depsString.split(',').map(s => s.trim()));
-          }
-
-          // エラー情報をMIBデータに保存
-          mibData.error = errorMessage;
-          mibData.missingDependencies = missingDeps.length > 0 ? missingDeps : undefined;
-          await saveMib(mibData);
-
+          // rebuildAllTreesが該当ファイルにエラー情報を保存済み
           await loadData(); // リロード
           throw error; // エラーを再スロー
         }
@@ -318,19 +335,7 @@ export function useMibStorage() {
           await rebuildAllTrees();
           await loadData();
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          const missingDeps: string[] = [];
-
-          const match = errorMessage.match(/Missing MIB dependencies: ([^.]+)/);
-          if (match) {
-            const depsString = match[1];
-            missingDeps.push(...depsString.split(',').map(s => s.trim()));
-          }
-
-          mibData.error = errorMessage;
-          mibData.missingDependencies = missingDeps.length > 0 ? missingDeps : undefined;
-          await saveMib(mibData);
-
+          // rebuildAllTreesが該当ファイルにエラー情報を保存済み
           await loadData();
           throw error;
         }
