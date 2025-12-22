@@ -20,13 +20,11 @@ export function mergeMibs(mibs: StoredMibData[]): MibNode[] {
     // Check if this looks like an integrated tree (has root nodes like 'iso')
     const hasIsoRoot = mibs[0].parsedData.some(node => node.name === 'iso');
     if (hasIsoRoot) {
-      console.log('[mergeMibs] Using pre-built integrated tree from storage');
       return mibs[0].parsedData;
     }
   }
 
   // Fallback: merge individual MIB trees (legacy support)
-  console.log('[mergeMibs] Merging individual MIB trees');
   const allNodes: FlatMibNode[] = [];
   const nodeMap = new Map<string, FlatMibNode>();
 

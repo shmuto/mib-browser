@@ -37,8 +37,6 @@ export class MibTreeBuilder {
    * @throws Error if orphan nodes remain (missing MIB dependencies)
    */
   public buildTree(modules: ParsedModule[]): MibNode[] {
-    console.log(`[MibTreeBuilder] Building tree from ${modules.length} modules`);
-
     // Pass 1: Symbol Registration
     this.pass1_registerSymbols(modules);
 
@@ -87,9 +85,6 @@ export class MibTreeBuilder {
 
   // === Pass 1: Symbol Registration ===
   private pass1_registerSymbols(modules: ParsedModule[]): void {
-    console.log('[Pass1] Registering symbols...');
-    let totalObjects = 0;
-
     modules.forEach(mod => {
       // Save IMPORTS information
       this.importsMap.set(mod.moduleName, mod.imports);
@@ -110,8 +105,6 @@ export class MibTreeBuilder {
 
           // If seed node exists with same parent and subid, skip this node (use seed node instead)
           if (existingSeedNode.parentName === obj.parentName && subidsMatch) {
-            console.log(`[Pass1] Skipping duplicate: ${obj.name} (seed node exists)`);
-
             // Update seed node with additional information from MIB file if missing
             if (obj.description && !existingSeedNode.description) {
               existingSeedNode.description = obj.description;
@@ -123,14 +116,7 @@ export class MibTreeBuilder {
             // Also register with the MIB's module name key for resolution
             const uniqueKey = `${mod.moduleName}::${obj.name}`;
             this.symbolMap.set(uniqueKey, existingSeedNode);
-
-            totalObjects++;
             return; // Skip creating new node
-          } else {
-            // Debug: log why conditions don't match
-            console.log(`[Pass1] Seed node found for "${obj.name}" but conditions don't match:`);
-            console.log(`  Seed parentName: "${existingSeedNode.parentName}", MIB parentName: "${obj.parentName}" (match: ${existingSeedNode.parentName === obj.parentName})`);
-            console.log(`  Seed subid: ${JSON.stringify(seedSubid)}, MIB subid: ${JSON.stringify(objSubid)} (match: ${subidsMatch})`);
           }
         }
 
@@ -160,21 +146,12 @@ export class MibTreeBuilder {
           this.nameMap.set(obj.name, []);
         }
         this.nameMap.get(obj.name)!.push(node);
-
-        totalObjects++;
       });
     });
-
-    console.log(`[Pass1] Registered ${totalObjects} objects from ${modules.length} modules`);
-    console.log(`[Pass1] Symbol Map size: ${this.symbolMap.size}, Name Map size: ${this.nameMap.size}`);
   }
 
   // === Pass 2: Parent Linking ===
   private pass2_linkParents(): void {
-    console.log('[Pass2] Linking parents...');
-    let linkedCount = 0;
-    let orphanCount = 0;
-
     for (const node of this.symbolMap.values()) {
       if (!node.parentName) {
         // No parent (root node)
@@ -190,17 +167,12 @@ export class MibTreeBuilder {
         if (!alreadyLinked) {
           // Establish parent-child relationship (parent OID will be set in Pass3)
           parentNode.children.push(node);
-          linkedCount++;
         }
       } else {
         // Parent not found - add to Orphan List
         this.orphanNodes.push(node);
-        orphanCount++;
-        console.warn(`[Pass2] Orphan: ${node.name} (parent: ${node.parentName}, module: ${node.moduleName})`);
       }
     }
-
-    console.log(`[Pass2] Linked: ${linkedCount}, Orphans: ${orphanCount}`);
   }
 
   /**
@@ -247,12 +219,9 @@ export class MibTreeBuilder {
     const maxRetries = 3;
     let retry = 0;
 
-    console.log('[Pass2.5] Rescuing orphan nodes...');
-
     while (this.orphanNodes.length > 0 && retry < maxRetries) {
       const currentOrphans = [...this.orphanNodes];
       this.orphanNodes = [];
-      let rescuedCount = 0;
 
       currentOrphans.forEach(node => {
         const parent = this.resolveParent(node);
@@ -263,28 +232,18 @@ export class MibTreeBuilder {
           if (!alreadyLinked) {
             // Establish parent-child relationship (parent OID will be set in Pass3)
             parent.children.push(node);
-            rescuedCount++;
-            console.log(`[Rescue] ${node.name} rescued (parent: ${parent.name})`);
           }
         } else {
           this.orphanNodes.push(node); // Still orphan
         }
       });
 
-      console.log(`[Pass2.5] Retry ${retry + 1}: Rescued ${rescuedCount}, Remaining orphans: ${this.orphanNodes.length}`);
       retry++;
-    }
-
-    if (this.orphanNodes.length > 0) {
-      console.error(`[Orphan] ${this.orphanNodes.length} nodes remain orphaned:`,
-        this.orphanNodes.map(n => `${n.name}(${n.moduleName}, parent=${n.parentName})`));
     }
   }
 
   // === Pass 3: OID Computation ===
   private pass3_computeOids(): void {
-    console.log('[Pass3] Computing OIDs...');
-
     // Compute OIDs recursively from seed nodes
     this.seedNodes.forEach(seed => {
       this.computeOidRecursive(seed, new Set());
@@ -384,8 +343,6 @@ export class MibTreeBuilder {
     // Build seed node parent-child relationships
     // iso -> org -> dod -> internet -> ...
     this.buildSeedHierarchy();
-
-    console.log(`[SeedNodes] Registered ${this.seedNodes.length} seed nodes`);
   }
 
   private buildSeedHierarchy(): void {
