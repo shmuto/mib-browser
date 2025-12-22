@@ -259,10 +259,8 @@ export default function SavedMibsList({
                         {mib.error && (
                           <div className="relative group">
                             <AlertTriangle size={14} className="text-amber-500 flex-shrink-0" />
-                            <div className="absolute left-0 bottom-full mb-1 hidden group-hover:block z-10 w-64 p-2 bg-gray-900 text-white text-xs rounded shadow-lg">
-                              <p className="font-semibold mb-1">Error:</p>
-                              <p className="mb-2">{mib.error}</p>
-                              {mib.missingDependencies && mib.missingDependencies.length > 0 && (
+                            <div className="absolute left-0 bottom-full mb-1 hidden group-hover:block z-10 min-w-48 max-w-xs p-2 bg-gray-900 text-white text-xs rounded shadow-lg whitespace-normal break-words">
+                              {mib.missingDependencies && mib.missingDependencies.length > 0 ? (
                                 <>
                                   <p className="font-semibold mb-1">Missing MIBs:</p>
                                   <ul className="list-disc list-inside">
@@ -270,6 +268,11 @@ export default function SavedMibsList({
                                       <li key={idx}>{dep}</li>
                                     ))}
                                   </ul>
+                                </>
+                              ) : (
+                                <>
+                                  <p className="font-semibold mb-1">Error:</p>
+                                  <p>{mib.error}</p>
                                 </>
                               )}
                             </div>
