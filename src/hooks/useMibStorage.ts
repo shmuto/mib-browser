@@ -53,7 +53,8 @@ export function useMibStorage() {
     }
   }, []);
 
-  // 競合検出関数
+  // 競合検出関数（fileNameベース - 異なるモジュール間の競合検出用）
+  // 注: 同じモジュール名のファイル間の競合はrebuildAllTreesで別途検出
   const detectConflicts = useCallback((
     newTree: MibNode[],
     newFileName: string,
@@ -62,21 +63,8 @@ export function useMibStorage() {
     const conflicts: MibConflict[] = [];
     const allNewNodes = flattenTree(newTree);
 
-    // 新しいファイルに属するノードのみをフィルタリング（mibNameではなくfileNameで）
+    // 新しいファイルに属するノードのみをフィルタリング
     const newNodes = allNewNodes.filter(node => node.fileName === newFileName);
-
-    console.log(`[detectConflicts] Checking conflicts for ${newFileName}`);
-    console.log(`[detectConflicts] New nodes: ${newNodes.length}, Existing MIBs: ${existingMibs.length}`);
-
-    // デバッグ: aristaAclDpSupportFlagsを探す
-    const targetNode = newNodes.find(n => n.name === 'aristaAclDpSupportFlags');
-    if (targetNode) {
-      console.log(`[detectConflicts] Found aristaAclDpSupportFlags in newNodes`);
-      console.log(`[detectConflicts]   Type: ${targetNode.type}, OID: ${targetNode.oid}, fileName: ${targetNode.fileName}`);
-    } else {
-      console.log(`[detectConflicts] aristaAclDpSupportFlags NOT found in newNodes!`);
-      console.log(`[detectConflicts] Sample nodes:`, allNewNodes.slice(0, 5).map(n => ({ name: n.name, fileName: n.fileName })));
-    }
 
     // 新しいファイルの各ノードについて、既存のMIBと比較
     newNodes.forEach(newNode => {
@@ -90,22 +78,16 @@ export function useMibStorage() {
       existingMibs.forEach(existingMib => {
         const allExistingNodes = flattenTree(existingMib.parsedData);
 
-        // 既存のファイルに属するノードのみをフィルタリング（mibNameではなくfileNameで）
+        // 既存のファイルに属するノードのみをフィルタリング
         const existingNodes = allExistingNodes.filter(node => node.fileName === existingMib.fileName);
-
-        console.log(`[detectConflicts] Comparing with ${existingMib.fileName}, nodes: ${existingNodes.length}`);
 
         const matchingNode = existingNodes.find(n => n.oid === newNode.oid);
 
         if (matchingNode) {
-          console.log(`[detectConflicts] Found matching node: ${newNode.name} (${newNode.oid})`);
-          console.log(`[detectConflicts]   New type: ${newNode.type}, Existing type: ${matchingNode.type}`);
-
           // 既存ノードもOBJECT IDENTIFIER、MODULE-IDENTITY、OBJECT-IDENTITYの場合はスキップ
           if (matchingNode.type === 'OBJECT IDENTIFIER' ||
               matchingNode.type === 'MODULE-IDENTITY' ||
               matchingNode.type === 'OBJECT-IDENTITY') {
-            console.log(`[detectConflicts]   Skipping (type: ${matchingNode.type})`);
             return;
           }
 
@@ -118,13 +100,6 @@ export function useMibStorage() {
             const existingValue = String(matchingNode[field] || '');
             const newValue = String(newNode[field] || '');
 
-            if (field === 'description' && newNode.name === 'aristaAclDpSupportFlags') {
-              console.log(`[detectConflicts] Checking description for ${newNode.name}`);
-              console.log(`[detectConflicts]   Existing: "${existingValue.substring(0, 100)}..."`);
-              console.log(`[detectConflicts]   New: "${newValue.substring(0, 100)}..."`);
-              console.log(`[detectConflicts]   Equal: ${existingValue === newValue}`);
-            }
-
             // 両方の値が存在し、かつ異なる場合のみ競合とみなす
             if (existingValue && newValue && existingValue !== newValue) {
               differences.push({
@@ -136,10 +111,6 @@ export function useMibStorage() {
           });
 
           if (differences.length > 0) {
-            console.log(`[detectConflicts] CONFLICT FOUND: ${newNode.name} (${newNode.oid})`);
-            console.log(`[detectConflicts]   ${existingMib.fileName} vs ${newFileName}`);
-            console.log(`[detectConflicts]   Differences:`, differences);
-
             conflicts.push({
               oid: newNode.oid,
               name: newNode.name,
@@ -152,7 +123,6 @@ export function useMibStorage() {
       });
     });
 
-    console.log(`[detectConflicts] Total conflicts found: ${conflicts.length}`);
     return conflicts;
   }, []);
 
@@ -194,11 +164,87 @@ export function useMibStorage() {
         mib.parsedData = tree;
       }
 
-      // Step 6: 競合検出と保存
+      // Step 6: 同じモジュール名のMIBファイルを検出し、ノードレベルで差異を比較
+      // 各ファイルのパース結果をマップに保持（ファイル名 -> ParsedModule）
+      const parsedModuleMap = new Map(modules.map(m => [m.fileName, m]));
+
+      // モジュール名ごとにファイルをグループ化
+      const mibNameMap = new Map<string, StoredMibData[]>();
       for (const mib of allMibs) {
-        // 競合検出（他のMIBとの競合をチェック）
-        const otherMibs = allMibs.filter(m => m.id !== mib.id);
-        const conflicts = detectConflicts(tree, mib.fileName, otherMibs);
+        if (!mibNameMap.has(mib.mibName!)) {
+          mibNameMap.set(mib.mibName!, []);
+        }
+        mibNameMap.get(mib.mibName!)!.push(mib);
+      }
+
+      // 重複するモジュール名を持つファイル群を特定
+      const duplicateModules = Array.from(mibNameMap.entries())
+        .filter(([_, mibs]) => mibs.length > 1);
+
+      console.log(`[rebuildAllTrees] Found ${duplicateModules.length} duplicate MIB modules`);
+
+      // Step 7: 競合検出と保存
+      for (const mib of allMibs) {
+        const conflicts: MibConflict[] = [];
+
+        // 同じモジュール名を持つ他のファイルとノードレベルで比較
+        const duplicateGroup = duplicateModules.find(([name]) => name === mib.mibName);
+        if (duplicateGroup) {
+          const [moduleName, duplicates] = duplicateGroup;
+          const otherDuplicates = duplicates.filter(m => m.id !== mib.id);
+
+          console.log(`[rebuildAllTrees] ${mib.fileName} has ${otherDuplicates.length} duplicate(s) with same module name "${moduleName}"`);
+
+          // このファイルのパース結果を取得
+          const thisModule = parsedModuleMap.get(mib.fileName);
+          if (thisModule) {
+            // 各重複ファイルとノードレベルで比較
+            for (const otherMib of otherDuplicates) {
+              const otherModule = parsedModuleMap.get(otherMib.fileName);
+              if (!otherModule) continue;
+
+              // オブジェクト名でマップを作成
+              const thisObjects = new Map(thisModule.objects.map(o => [o.name, o]));
+              const otherObjects = new Map(otherModule.objects.map(o => [o.name, o]));
+
+              // 両方に存在するオブジェクトを比較
+              for (const [name, thisObj] of thisObjects) {
+                const otherObj = otherObjects.get(name);
+                if (!otherObj) continue; // 片方にしか存在しない場合はスキップ
+
+                const differences: { field: string; existingValue: string; newValue: string }[] = [];
+
+                // フィールドを比較
+                const fieldsToCheck: (keyof typeof thisObj)[] = ['type', 'syntax', 'access', 'status', 'description'];
+                for (const field of fieldsToCheck) {
+                  const thisValue = String(thisObj[field] || '');
+                  const otherValue = String(otherObj[field] || '');
+
+                  // 両方に値があり、かつ異なる場合のみ記録
+                  if (thisValue && otherValue && thisValue !== otherValue) {
+                    differences.push({
+                      field,
+                      existingValue: otherValue.length > 200 ? otherValue.substring(0, 200) + '...' : otherValue,
+                      newValue: thisValue.length > 200 ? thisValue.substring(0, 200) + '...' : thisValue,
+                    });
+                  }
+                }
+
+                if (differences.length > 0) {
+                  // OIDを統合ツリーから取得
+                  const treeNode = flatTree.find(n => n.name === name && n.mibName === moduleName);
+                  conflicts.push({
+                    oid: treeNode?.oid || 'unknown',
+                    name,
+                    existingFile: otherMib.fileName,
+                    newFile: mib.fileName,
+                    differences,
+                  });
+                }
+              }
+            }
+          }
+        }
 
         mib.conflicts = conflicts.length > 0 ? conflicts : undefined;
 

@@ -105,7 +105,7 @@ export interface ParsedModule {
 // Raw MIB object (parsed but OIDs not yet resolved)
 export interface RawMibObject {
   name: string;
-  parentName: string;           // Unresolved parent name (e.g., "aristaProducts")
+  parentName: string;           // Unresolved parent name
   subid: number | number[];     // Support for multiple SubIDs
   type: string;                 // "OBJECT-TYPE" | "OBJECT IDENTIFIER" | "MODULE-IDENTITY" | "OBJECT-IDENTITY"
   description?: string;
