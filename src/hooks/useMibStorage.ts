@@ -257,21 +257,39 @@ export function useMibStorage() {
   const removeMib = useCallback(async (id: string): Promise<void> => {
     try {
       await deleteMib(id);
+      // 残りのMIBでツリーを再構築
+      const remainingMibs = await getAllMibs();
+      if (remainingMibs.length > 0) {
+        try {
+          await rebuildAllTrees();
+        } catch {
+          // ツリー構築エラーは無視（不足MIBなど）
+        }
+      }
       await loadData();
     } catch (error) {
       console.error('Failed to delete MIB:', error);
     }
-  }, [loadData]);
+  }, [loadData, rebuildAllTrees]);
 
   // 複数のMIBを削除
   const removeMibs = useCallback(async (ids: string[]): Promise<void> => {
     try {
       await deleteMibs(ids);
+      // 残りのMIBでツリーを再構築
+      const remainingMibs = await getAllMibs();
+      if (remainingMibs.length > 0) {
+        try {
+          await rebuildAllTrees();
+        } catch {
+          // ツリー構築エラーは無視（不足MIBなど）
+        }
+      }
       await loadData();
     } catch (error) {
       console.error('Failed to delete MIBs:', error);
     }
-  }, [loadData]);
+  }, [loadData, rebuildAllTrees]);
 
   // MIBを取得
   const getMibById = useCallback(async (id: string): Promise<StoredMibData | null> => {
