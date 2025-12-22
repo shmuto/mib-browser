@@ -6,7 +6,7 @@ import TextInputModal from './TextInputModal';
 
 interface FileUploaderProps {
   onUpload: (file: File, forceUpload?: boolean, skipReload?: boolean) => Promise<UploadResult>;
-  onUploadFromText?: (content: string) => Promise<UploadResult>;
+  onUploadFromText?: (content: string, fileName: string) => Promise<UploadResult>;
   onReload?: () => Promise<void>;
 }
 
@@ -27,12 +27,12 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload }: F
   });
   const [isTextModalOpen, setIsTextModalOpen] = useState(false);
 
-  const handleTextSubmit = useCallback(async (content: string) => {
+  const handleTextSubmit = useCallback(async (content: string, fileName: string) => {
     if (!onUploadFromText) {
       return { success: false, error: 'Text upload not supported' };
     }
 
-    const result = await onUploadFromText(content);
+    const result = await onUploadFromText(content, fileName);
 
     if (result.success) {
       if (onReload) {

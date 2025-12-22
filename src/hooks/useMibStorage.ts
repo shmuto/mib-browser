@@ -300,15 +300,10 @@ export function useMibStorage() {
   }, [loadData]);
 
   // テキストからMIBをアップロード
-  const uploadMibFromText = useCallback(async (content: string, skipReload = false): Promise<UploadResult> => {
+  const uploadMibFromText = useCallback(async (content: string, fileName: string, skipReload = false): Promise<UploadResult> => {
     try {
       // parseMibModule()でパース（OID未解決）
-      const parsedModule = parseMibModule(content, '');
-
-      // モジュール名からファイル名を生成
-      const fileName = parsedModule.moduleName !== 'UNKNOWN'
-        ? parsedModule.moduleName
-        : `MIB-${Date.now()}`;
+      const parsedModule = parseMibModule(content, fileName);
 
       // 既存MIBを取得
       const existingMibs = await getAllMibs();

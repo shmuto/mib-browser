@@ -4,11 +4,12 @@ import { X, FileText, Loader2 } from 'lucide-react';
 interface TextInputModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (content: string) => Promise<{ success: boolean; error?: string }>;
+  onSubmit: (content: string, fileName: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputModalProps) {
   const [content, setContent] = useState('');
+  const [fileName, setFileName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,6 +31,7 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
   useEffect(() => {
     if (!isOpen) {
       setContent('');
+      setFileName('');
       setError(null);
     }
   }, [isOpen]);
@@ -39,12 +41,16 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
       setError('MIB content is required');
       return;
     }
+    if (!fileName.trim()) {
+      setError('File name is required');
+      return;
+    }
 
     setIsSubmitting(true);
     setError(null);
 
     try {
-      const result = await onSubmit(content);
+      const result = await onSubmit(content, fileName.trim());
       if (result.success) {
         onClose();
       } else {
@@ -55,7 +61,7 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
     } finally {
       setIsSubmitting(false);
     }
-  }, [content, onSubmit, onClose]);
+  }, [content, fileName, onSubmit, onClose]);
 
   if (!isOpen) return null;
 
@@ -66,12 +72,20 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
     }
   };
 
+  // モーダル内のクリックを親に伝播させない
+  const handleModalClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+  };
+
   return (
     <div
       className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
       onClick={handleBackgroundClick}
     >
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+      <div
+        className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col"
+        onClick={handleModalClick}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div className="flex items-center gap-2">
@@ -90,13 +104,30 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
 
         {/* Content */}
         <div className="flex-1 overflow-auto p-4">
-          <p className="text-sm text-gray-600 mb-3">
-            Paste the MIB file content below. The module name will be automatically detected.
-          </p>
-          <textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder="Paste MIB content here...
+          {/* File name input */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              File Name
+            </label>
+            <input
+              type="text"
+              value={fileName}
+              onChange={(e) => setFileName(e.target.value)}
+              placeholder="e.g. MY-CUSTOM-MIB"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              disabled={isSubmitting}
+            />
+          </div>
+
+          {/* MIB content textarea */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              MIB Content
+            </label>
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder="Paste MIB content here...
 
 Example:
 MY-MIB DEFINITIONS ::= BEGIN
@@ -104,9 +135,11 @@ IMPORTS
     enterprises, MODULE-IDENTITY
         FROM SNMPv2-SMI;
 ..."
-            className="w-full h-80 p-3 font-mono text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-            disabled={isSubmitting}
-          />
+              className="w-full h-72 p-3 font-mono text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+              disabled={isSubmitting}
+            />
+          </div>
+
           {error && (
             <p className="mt-2 text-sm text-red-600">{error}</p>
           )}
@@ -123,7 +156,7 @@ IMPORTS
           </button>
           <button
             onClick={handleSubmit}
-            disabled={isSubmitting || !content.trim()}
+            disabled={isSubmitting || !content.trim() || !fileName.trim()}
             className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors disabled:opacity-50 flex items-center gap-2"
           >
             {isSubmitting ? (
