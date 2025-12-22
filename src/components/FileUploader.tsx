@@ -1,10 +1,12 @@
 import { useCallback, useRef, useState } from 'react';
-import { Upload, FileText, Loader2 } from 'lucide-react';
+import { Upload, FileText, Loader2, ClipboardPaste } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { UploadResult } from '../types/mib';
+import TextInputModal from './TextInputModal';
 
 interface FileUploaderProps {
   onUpload: (file: File, forceUpload?: boolean, skipReload?: boolean) => Promise<UploadResult>;
+  onUploadFromText?: (content: string) => Promise<UploadResult>;
   onReload?: () => Promise<void>;
 }
 
@@ -15,7 +17,7 @@ interface UploadProgress {
   totalFiles: number;
 }
 
-export default function FileUploader({ onUpload, onReload }: FileUploaderProps) {
+export default function FileUploader({ onUpload, onUploadFromText, onReload }: FileUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
     isUploading: false,
@@ -23,6 +25,24 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
     processedFiles: 0,
     totalFiles: 0,
   });
+  const [isTextModalOpen, setIsTextModalOpen] = useState(false);
+
+  const handleTextSubmit = useCallback(async (content: string) => {
+    if (!onUploadFromText) {
+      return { success: false, error: 'Text upload not supported' };
+    }
+
+    const result = await onUploadFromText(content);
+
+    if (result.success) {
+      if (onReload) {
+        await onReload();
+      }
+      toast.success('MIB added successfully from text');
+    }
+
+    return result;
+  }, [onUploadFromText, onReload]);
 
   const processUpload = useCallback(async (file: File, skipReload = false, fileIndex: number, totalFiles: number) => {
     // Update progress
@@ -297,6 +317,27 @@ export default function FileUploader({ onUpload, onReload }: FileUploaderProps) 
           </div>
         </>
       )}
+
+      {/* Paste text button */}
+      {onUploadFromText && !uploadProgress.isUploading && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsTextModalOpen(true);
+          }}
+          className="mt-3 flex items-center justify-center gap-2 px-4 py-2 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors mx-auto"
+        >
+          <ClipboardPaste size={16} />
+          <span>Paste from text</span>
+        </button>
+      )}
+
+      {/* Text input modal */}
+      <TextInputModal
+        isOpen={isTextModalOpen}
+        onClose={() => setIsTextModalOpen(false)}
+        onSubmit={handleTextSubmit}
+      />
     </div>
   );
 }

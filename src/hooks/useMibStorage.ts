@@ -282,6 +282,70 @@ export function useMibStorage() {
     }
   }, [loadData]);
 
+  // テキストからMIBをアップロード
+  const uploadMibFromText = useCallback(async (content: string, skipReload = false): Promise<UploadResult> => {
+    try {
+      // parseMibModule()でパース（OID未解決）
+      const parsedModule = parseMibModule(content, '');
+
+      // モジュール名からファイル名を生成
+      const fileName = parsedModule.moduleName !== 'UNKNOWN'
+        ? parsedModule.moduleName
+        : `MIB-${Date.now()}`;
+
+      // 既存MIBを取得
+      const existingMibs = await getAllMibs();
+      const existingMib = existingMibs.find(mib => mib.fileName === fileName);
+
+      // 一時的にStoredMibDataとして保存（parsedDataは空配列）
+      const mibData: StoredMibData = {
+        id: existingMib ? existingMib.id : generateId(),
+        fileName,
+        content,
+        parsedData: [],
+        uploadedAt: existingMib ? existingMib.uploadedAt : Date.now(),
+        lastAccessedAt: Date.now(),
+        size: new Blob([content]).size,
+        mibName: parsedModule.moduleName,
+        conflicts: undefined,
+      };
+
+      await saveMib(mibData);
+
+      // 全MIBを再構築
+      if (!skipReload) {
+        try {
+          await rebuildAllTrees();
+          await loadData();
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          const missingDeps: string[] = [];
+
+          const match = errorMessage.match(/Missing MIB dependencies: ([^.]+)/);
+          if (match) {
+            const depsString = match[1];
+            missingDeps.push(...depsString.split(',').map(s => s.trim()));
+          }
+
+          mibData.error = errorMessage;
+          mibData.missingDependencies = missingDeps.length > 0 ? missingDeps : undefined;
+          await saveMib(mibData);
+
+          await loadData();
+          throw error;
+        }
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to upload MIB from text:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }, [loadData, rebuildAllTrees]);
+
   // すべてクリア
   const clearAll = useCallback(async (): Promise<void> => {
     try {
@@ -297,6 +361,7 @@ export function useMibStorage() {
     storageInfo,
     loading,
     uploadMib,
+    uploadMibFromText,
     removeMib,
     removeMibs,
     getMibById,

@@ -26,6 +26,7 @@ export default function App() {
     storageInfo,
     loading,
     uploadMib,
+    uploadMibFromText,
     removeMib,
     removeMibs,
     clearAll,
@@ -218,7 +219,7 @@ export default function App() {
             <aside className="bg-white border-r border-gray-200 flex flex-col h-full">
               <div className="p-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-800 mb-4">Saved MIBs</h2>
-                <FileUploader onUpload={handleUpload} onReload={reload} />
+                <FileUploader onUpload={handleUpload} onUploadFromText={uploadMibFromText} onReload={reload} />
               </div>
 
               <div className="flex-1 overflow-y-auto">
