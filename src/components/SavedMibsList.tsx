@@ -258,8 +258,8 @@ export default function SavedMibsList({
                         <span className="font-medium text-gray-800 truncate">{mib.fileName}</span>
                         {mib.error && (
                           <div className="relative group">
-                            <AlertTriangle size={14} className="text-amber-500 flex-shrink-0" />
-                            <div className="absolute left-0 bottom-full mb-1 hidden group-hover:block z-10 min-w-48 max-w-xs p-2 bg-gray-900 text-white text-xs rounded shadow-lg whitespace-normal break-words">
+                            <AlertTriangle size={14} className="text-amber-500 flex-shrink-0 cursor-help" />
+                            <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block z-50 min-w-48 max-w-xs p-2 bg-gray-900 text-white text-xs rounded shadow-lg whitespace-normal break-words">
                               {mib.missingDependencies && mib.missingDependencies.length > 0 ? (
                                 <>
                                   <p className="font-semibold mb-1">Missing MIBs:</p>
