@@ -15,7 +15,7 @@ import {
   migrateFromLocalStorage,
 } from '../lib/indexeddb';
 import { generateId } from '../lib/storage';
-import { flattenTree, parseMibModule } from '../lib/mib-parser';
+import { flattenTree, parseMibModule, validateMibContent } from '../lib/mib-parser';
 import { MibTreeBuilder } from '../lib/mib-tree-builder';
 
 export function useMibStorage() {
@@ -243,6 +243,15 @@ export function useMibStorage() {
     try {
       const content = await file.text();
 
+      // MIBファイルとして有効かチェック
+      const validation = validateMibContent(content);
+      if (!validation.isValid) {
+        return {
+          success: false,
+          error: validation.error,
+        };
+      }
+
       // parseMibModule()でパース（OID未解決）
       const parsedModule = parseMibModule(content, file.name);
 
@@ -356,6 +365,15 @@ export function useMibStorage() {
   // テキストからMIBをアップロード
   const uploadMibFromText = useCallback(async (content: string, fileName: string, skipReload = false): Promise<UploadResult> => {
     try {
+      // MIBファイルとして有効かチェック
+      const validation = validateMibContent(content);
+      if (!validation.isValid) {
+        return {
+          success: false,
+          error: validation.error,
+        };
+      }
+
       // parseMibModule()でパース（OID未解決）
       const parsedModule = parseMibModule(content, fileName);
 

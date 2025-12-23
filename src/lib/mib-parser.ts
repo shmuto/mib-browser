@@ -21,6 +21,53 @@ function extractMibName(content: string): string | null {
 }
 
 /**
+ * Validate if content is a valid MIB file
+ * @param content File content to validate
+ * @returns Object with isValid flag and error message if invalid
+ */
+export function validateMibContent(content: string): { isValid: boolean; error?: string } {
+  // Check 1: Must have MIB module definition (MODULE-NAME DEFINITIONS ::= BEGIN)
+  const mibName = extractMibName(content);
+  if (!mibName) {
+    return {
+      isValid: false,
+      error: 'Invalid MIB file: Missing module definition (MODULE-NAME DEFINITIONS ::= BEGIN)',
+    };
+  }
+
+  // Check 2: Must have BEGIN keyword
+  if (!/\bBEGIN\b/i.test(content)) {
+    return {
+      isValid: false,
+      error: 'Invalid MIB file: Missing BEGIN keyword',
+    };
+  }
+
+  // Check 3: Must have END keyword
+  if (!/\bEND\b/i.test(content)) {
+    return {
+      isValid: false,
+      error: 'Invalid MIB file: Missing END keyword',
+    };
+  }
+
+  // Check 4: Should have at least one of: OBJECT-TYPE, OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY
+  const hasObjectType = /OBJECT-TYPE/i.test(content);
+  const hasObjectIdentifier = /OBJECT\s+IDENTIFIER/i.test(content);
+  const hasModuleIdentity = /MODULE-IDENTITY/i.test(content);
+  const hasObjectIdentity = /OBJECT-IDENTITY/i.test(content);
+
+  if (!hasObjectType && !hasObjectIdentifier && !hasModuleIdentity && !hasObjectIdentity) {
+    return {
+      isValid: false,
+      error: 'Invalid MIB file: No OBJECT-TYPE, OBJECT IDENTIFIER, MODULE-IDENTITY, or OBJECT-IDENTITY definitions found',
+    };
+  }
+
+  return { isValid: true };
+}
+
+/**
  * MIBファイルをパース
  * @param content MIBファイルの内容
  * @param externalOidMap 他のMIBファイルで定義されたOIDマップ（オプション）
