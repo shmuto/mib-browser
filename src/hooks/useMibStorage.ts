@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import type { StoredMibData, StorageInfo, UploadResult, MibConflict } from '../types/mib';
+import type { StoredMibData, StorageInfo, UploadResult, MibConflict, MibNode } from '../types/mib';
 import {
   getAllMibs,
   saveMib,
@@ -13,6 +13,9 @@ import {
   getStorageInfo,
   clearAllMibs,
   migrateFromLocalStorage,
+  saveMergedTree,
+  loadMergedTree,
+  clearMergedTree,
 } from '../lib/indexeddb';
 import { generateId } from '../lib/storage';
 import { flattenTree, parseMibModule, validateMibContent } from '../lib/mib-parser';
@@ -20,6 +23,7 @@ import { MibTreeBuilder } from '../lib/mib-tree-builder';
 
 export function useMibStorage() {
   const [mibs, setMibs] = useState<StoredMibData[]>([]);
+  const [mergedTree, setMergedTree] = useState<MibNode[]>([]);
   const [storageInfo, setStorageInfo] = useState<StorageInfo>({
     used: 0,
     available: 0,
@@ -42,6 +46,10 @@ export function useMibStorage() {
       // IndexedDBからMIBを読み込む
       const loadedMibs = await getAllMibs();
       setMibs(loadedMibs);
+
+      // マージされたツリーを読み込む
+      const tree = await loadMergedTree();
+      setMergedTree(tree);
 
       // ストレージ情報を取得
       const info = await getStorageInfo();
@@ -114,7 +122,7 @@ export function useMibStorage() {
                 if (mib) {
                   mib.error = `Missing MIB dependencies: ${dependsOnMissing.join(', ')}`;
                   mib.missingDependencies = dependsOnMissing;
-                  mib.parsedData = []; // ツリーは空
+                  mib.nodeCount = 0; // ノード数は0
                   await saveMib(mib);
                 }
               }
@@ -136,16 +144,21 @@ export function useMibStorage() {
       // ツリー構築に完全に失敗した場合（モジュールが残っていない場合）
       if (!tree || modules.length === 0) {
         // 全てのMIBにエラー情報を保存済み
+        await clearMergedTree();
         return;
       }
 
       // Step 4: ツリーをフラット化
       const flatTree = flattenTree(tree);
 
-      // Step 5: エラーなしのMIBに統合ツリー全体を保存
-      for (const mib of allMibs) {
-        if (!errorFiles.has(mib.fileName)) {
-          mib.parsedData = tree;
+      // Step 5: マージされたツリーを1回だけ保存
+      await saveMergedTree(tree);
+
+      // 各MIBのnodeCountを計算（そのMIBに属するノード数）
+      const nodeCountByFile = new Map<string, number>();
+      for (const node of flatTree) {
+        if (node.fileName) {
+          nodeCountByFile.set(node.fileName, (nodeCountByFile.get(node.fileName) || 0) + 1);
         }
       }
 
@@ -229,6 +242,7 @@ export function useMibStorage() {
         mib.conflicts = conflicts.length > 0 ? conflicts : undefined;
         mib.error = undefined;
         mib.missingDependencies = undefined;
+        mib.nodeCount = nodeCountByFile.get(mib.fileName) || 0;
 
         await saveMib(mib);
       }
@@ -259,13 +273,13 @@ export function useMibStorage() {
       const existingMibs = await getAllMibs();
       const existingMib = existingMibs.find(mib => mib.fileName === file.name);
 
-      // 一時的にStoredMibDataとして保存（parsedDataは空配列）
+      // 一時的にStoredMibDataとして保存（nodeCountは0）
       // 後でrebuildAllTreesで更新される
       const mibData: StoredMibData = {
         id: existingMib ? existingMib.id : generateId(), // 既存があればそのIDを再利用
         fileName: file.name,
         content,
-        parsedData: [], // rebuildAllTreesで更新
+        nodeCount: 0, // rebuildAllTreesで更新
         uploadedAt: existingMib ? existingMib.uploadedAt : Date.now(), // 既存があれば元のアップロード日時を保持
         lastAccessedAt: Date.now(),
         size: file.size,
@@ -310,6 +324,9 @@ export function useMibStorage() {
         } catch {
           // ツリー構築エラーは無視（不足MIBなど）
         }
+      } else {
+        // MIBが0になったらツリーもクリア
+        await clearMergedTree();
       }
       await loadData();
     } catch (error) {
@@ -329,6 +346,9 @@ export function useMibStorage() {
         } catch {
           // ツリー構築エラーは無視（不足MIBなど）
         }
+      } else {
+        // MIBが0になったらツリーもクリア
+        await clearMergedTree();
       }
       await loadData();
     } catch (error) {
@@ -381,12 +401,12 @@ export function useMibStorage() {
       const existingMibs = await getAllMibs();
       const existingMib = existingMibs.find(mib => mib.fileName === fileName);
 
-      // 一時的にStoredMibDataとして保存（parsedDataは空配列）
+      // 一時的にStoredMibDataとして保存（nodeCountは0）
       const mibData: StoredMibData = {
         id: existingMib ? existingMib.id : generateId(),
         fileName,
         content,
-        parsedData: [],
+        nodeCount: 0, // rebuildAllTreesで更新
         uploadedAt: existingMib ? existingMib.uploadedAt : Date.now(),
         lastAccessedAt: Date.now(),
         size: new Blob([content]).size,
@@ -422,6 +442,7 @@ export function useMibStorage() {
   const clearAll = useCallback(async (): Promise<void> => {
     try {
       await clearAllMibs();
+      await clearMergedTree();
       await loadData();
     } catch (error) {
       console.error('Failed to clear all MIBs:', error);
@@ -430,6 +451,7 @@ export function useMibStorage() {
 
   return {
     mibs,
+    mergedTree,
     storageInfo,
     loading,
     uploadMib,

@@ -1,8 +1,9 @@
-import type { StoredMibData } from '../types/mib';
+import type { StoredMibData, MibNode } from '../types/mib';
 
 const DB_NAME = 'mib-browser-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'mibs';
+const TREE_STORE_NAME = 'mergedTree';
 
 // Open IndexedDB database
 function openDB(): Promise<IDBDatabase> {
@@ -15,11 +16,16 @@ function openDB(): Promise<IDBDatabase> {
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
 
-      // Create object store if it doesn't exist
+      // Create MIBs store if it doesn't exist
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
         objectStore.createIndex('fileName', 'fileName', { unique: false });
         objectStore.createIndex('uploadedAt', 'uploadedAt', { unique: false });
+      }
+
+      // Create merged tree store (single entry)
+      if (!db.objectStoreNames.contains(TREE_STORE_NAME)) {
+        db.createObjectStore(TREE_STORE_NAME, { keyPath: 'id' });
       }
     };
   });
@@ -166,4 +172,48 @@ export async function migrateFromLocalStorage(): Promise<number> {
     console.error('Migration from localStorage failed:', error);
     return 0;
   }
+}
+
+// Save merged tree (single instance)
+const TREE_KEY = 'merged-tree';
+
+export async function saveMergedTree(tree: MibNode[]): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(TREE_STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(TREE_STORE_NAME);
+    const request = store.put({ id: TREE_KEY, tree });
+
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
+// Load merged tree
+export async function loadMergedTree(): Promise<MibNode[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(TREE_STORE_NAME, 'readonly');
+    const store = transaction.objectStore(TREE_STORE_NAME);
+    const request = store.get(TREE_KEY);
+
+    request.onsuccess = () => {
+      const result = request.result;
+      resolve(result?.tree || []);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+// Clear merged tree
+export async function clearMergedTree(): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(TREE_STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(TREE_STORE_NAME);
+    const request = store.delete(TREE_KEY);
+
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
 }

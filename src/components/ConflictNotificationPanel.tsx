@@ -114,14 +114,14 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
                   <h3 className="text-sm font-semibold text-gray-700 mb-1">File 1</h3>
                   <p className="text-sm text-gray-900 font-medium">{selectedConflict.file1.fileName}</p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    {selectedConflict.file1.parsedData.length} nodes
+                    {selectedConflict.file1.nodeCount} nodes
                   </p>
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-gray-700 mb-1">File 2</h3>
                   <p className="text-sm text-gray-900 font-medium">{selectedConflict.file2.fileName}</p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    {selectedConflict.file2.parsedData.length} nodes
+                    {selectedConflict.file2.nodeCount} nodes
                   </p>
                 </div>
               </div>

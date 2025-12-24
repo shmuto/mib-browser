@@ -33,7 +33,7 @@ export interface StoredMibData {
   id: string;               // Unique ID (UUID)
   fileName: string;         // File name
   content: string;          // Original MIB file content
-  parsedData: MibNode[];    // Parsed tree data
+  nodeCount: number;        // Number of nodes contributed by this MIB
   uploadedAt: number;       // Upload timestamp
   lastAccessedAt: number;   // Last access timestamp
   size: number;             // File size (bytes)

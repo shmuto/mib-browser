@@ -2,7 +2,6 @@ import { useState, useCallback, useMemo, useEffect } from 'react';
 import type { MibNode, StoredMibData } from './types/mib';
 import { useMibStorage } from './hooks/useMibStorage';
 import { filterTreeByQuery } from './lib/mib-parser';
-import { mergeMibs } from './lib/mib-merger';
 import { getOidPath } from './lib/oid-utils';
 import toast, { Toaster } from 'react-hot-toast';
 
@@ -23,6 +22,7 @@ import { SiGithub } from 'react-icons/si';
 export default function App() {
   const {
     mibs,
+    mergedTree,
     storageInfo,
     loading,
     uploadMib,
@@ -48,11 +48,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('mib-browser-compact-mode', String(compactMode));
   }, [compactMode]);
-
-  // Merged tree from all MIBs
-  const mergedTree = useMemo(() => {
-    return mergeMibs(mibs);
-  }, [mibs]);
 
   // Search filtering - show only matching nodes and their ancestors
   const filteredTree = useMemo(() => {

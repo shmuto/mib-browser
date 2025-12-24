@@ -288,7 +288,7 @@ export default function SavedMibsList({
 
                     {/* Nodes */}
                     <td className="px-2 py-2 text-gray-600">
-                      {mib.parsedData.length}
+                      {mib.nodeCount}
                     </td>
 
                     {/* Date */}
