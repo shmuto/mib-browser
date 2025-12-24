@@ -732,6 +732,42 @@ export function parseMibModule(content: string, fileName?: string): import('../t
 }
 
 /**
+ * Parse OID block content like "{ org ieee(111) lan-man-stds(802) 1 }"
+ * Handles both simple format "{ parent subid }" and named number format "{ parent name(num) ... }"
+ * @returns { parent: string, subids: number[] } or null if parsing fails
+ */
+function parseOidBlock(blockContent: string): { parent: string; subids: number[] } | null {
+  // Remove braces and trim
+  const inner = blockContent.replace(/^\s*\{\s*|\s*\}\s*$/g, '').trim();
+  if (!inner) return null;
+
+  // Split by whitespace (handling multiline)
+  const parts = inner.split(/\s+/).filter(p => p.length > 0);
+  if (parts.length < 2) return null;
+
+  const parent = parts[0];
+  const subids: number[] = [];
+
+  // Process remaining parts
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i];
+
+    // Check for named number format: name(number)
+    const namedMatch = part.match(/^[\w\-]+\((\d+)\)$/);
+    if (namedMatch) {
+      subids.push(parseInt(namedMatch[1], 10));
+    } else if (/^\d+$/.test(part)) {
+      // Plain number
+      subids.push(parseInt(part, 10));
+    }
+    // Skip non-matching parts (like identifiers without numbers)
+  }
+
+  if (subids.length === 0) return null;
+  return { parent, subids };
+}
+
+/**
  * Extract OID assignments in raw format (without resolution)
  * Returns parent name and SubIDs as-is
  */
@@ -740,34 +776,35 @@ function extractOidAssignmentsRaw(
 ): Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string }> {
   const assignments: Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string }> = [];
 
-  // Pattern 1: identifier OBJECT IDENTIFIER ::= { parent child1 child2 ... }
-  const pattern1 = /(\w+)\s+OBJECT\s+IDENTIFIER\s*::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gi;
+  // Pattern 1: identifier OBJECT IDENTIFIER ::= { ... }
+  // Now supports both simple and named number formats
+  const pattern1 = /(\w+)\s+OBJECT\s+IDENTIFIER\s*::=\s*(\{[^}]+\})/gi;
 
   let match;
   while ((match = pattern1.exec(content)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
-    const parent = match[2];
-    const subids = match[3].trim().split(/\s+/).map(Number);
+    const parsed = parseOidBlock(match[2]);
+    if (!parsed) continue;
 
     assignments.push({
       name,
-      parent,
-      subids,
+      parent: parsed.parent,
+      subids: parsed.subids,
       type: 'OBJECT IDENTIFIER',
     });
   }
 
-  // Pattern 2: identifier MODULE-IDENTITY ... ::= { parent child1 child2 ... }
-  const pattern2 = /^\s*(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
+  // Pattern 2: identifier MODULE-IDENTITY ... ::= { ... }
+  const pattern2 = /^\s*(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while ((match = pattern2.exec(content)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
-    const parent = match[2];
-    const subids = match[3].trim().split(/\s+/).map(Number);
+    const parsed = parseOidBlock(match[2]);
+    if (!parsed) continue;
 
     const fullMatch = match[0];
     const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
@@ -775,22 +812,22 @@ function extractOidAssignmentsRaw(
 
     assignments.push({
       name,
-      parent,
-      subids,
+      parent: parsed.parent,
+      subids: parsed.subids,
       description,
       type: 'MODULE-IDENTITY',
     });
   }
 
-  // Pattern 3: identifier OBJECT-IDENTITY ... ::= { parent child1 child2 ... }
-  const pattern3 = /^\s*(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
+  // Pattern 3: identifier OBJECT-IDENTITY ... ::= { ... }
+  const pattern3 = /^\s*(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while ((match = pattern3.exec(content)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
-    const parent = match[2];
-    const subids = match[3].trim().split(/\s+/).map(Number);
+    const parsed = parseOidBlock(match[2]);
+    if (!parsed) continue;
 
     const fullMatch = match[0];
     const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
@@ -798,8 +835,8 @@ function extractOidAssignmentsRaw(
 
     assignments.push({
       name,
-      parent,
-      subids,
+      parent: parsed.parent,
+      subids: parsed.subids,
       description,
       type: 'OBJECT-IDENTITY',
     });
