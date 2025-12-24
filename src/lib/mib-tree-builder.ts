@@ -161,18 +161,50 @@ export class MibTreeBuilder {
       const parentNode = this.resolveParent(node);
 
       if (parentNode) {
-        // Check if already exists in parent's children (avoid duplicates from seed nodes)
+        // Check if already exists in parent's children (avoid duplicates from seed nodes or same definition in different MIBs)
         const alreadyLinked = parentNode.children.some(child => child === node);
 
-        if (!alreadyLinked) {
+        // Also check if a child with the same name and subid already exists (from different MIB defining the same node)
+        const duplicateChild = parentNode.children.find(child => {
+          const childNode = child as TreeBuildNode;
+          const subidsMatch = this.subidsEqual(childNode.subid, node.subid);
+          return childNode.name === node.name && subidsMatch;
+        });
+
+        if (!alreadyLinked && !duplicateChild) {
           // Establish parent-child relationship (parent OID will be set in Pass3)
           parentNode.children.push(node);
+        } else if (duplicateChild && duplicateChild !== node) {
+          // Merge: copy children from this node to the existing duplicate
+          const existingChild = duplicateChild as TreeBuildNode;
+          node.children.forEach(grandChild => {
+            const grandChildNode = grandChild as TreeBuildNode;
+            const existsInDuplicate = existingChild.children.some(c => {
+              const cn = c as TreeBuildNode;
+              return cn.name === grandChildNode.name && this.subidsEqual(cn.subid, grandChildNode.subid);
+            });
+            if (!existsInDuplicate) {
+              existingChild.children.push(grandChild);
+            }
+          });
         }
       } else {
         // Parent not found - add to Orphan List
         this.orphanNodes.push(node);
       }
     }
+  }
+
+  /**
+   * Compare two subid values (handles both number and array)
+   */
+  private subidsEqual(a: number | number[] | undefined, b: number | number[] | undefined): boolean {
+    if (a === undefined && b === undefined) return true;
+    if (a === undefined || b === undefined) return false;
+    if (Array.isArray(a) && Array.isArray(b)) {
+      return a.length === b.length && a.every((v, i) => v === b[i]);
+    }
+    return a === b;
   }
 
   /**
@@ -229,9 +261,29 @@ export class MibTreeBuilder {
           // Check if already exists in parent's children (avoid duplicates)
           const alreadyLinked = parent.children.some(child => child === node);
 
-          if (!alreadyLinked) {
+          // Also check if a child with the same name and subid already exists
+          const duplicateChild = parent.children.find(child => {
+            const childNode = child as TreeBuildNode;
+            const subidsMatch = this.subidsEqual(childNode.subid, node.subid);
+            return childNode.name === node.name && subidsMatch;
+          });
+
+          if (!alreadyLinked && !duplicateChild) {
             // Establish parent-child relationship (parent OID will be set in Pass3)
             parent.children.push(node);
+          } else if (duplicateChild && duplicateChild !== node) {
+            // Merge: copy children from this node to the existing duplicate
+            const existingChild = duplicateChild as TreeBuildNode;
+            node.children.forEach(grandChild => {
+              const grandChildNode = grandChild as TreeBuildNode;
+              const existsInDuplicate = existingChild.children.some(c => {
+                const cn = c as TreeBuildNode;
+                return cn.name === grandChildNode.name && this.subidsEqual(cn.subid, grandChildNode.subid);
+              });
+              if (!existsInDuplicate) {
+                existingChild.children.push(grandChild);
+              }
+            });
           }
         } else {
           this.orphanNodes.push(node); // Still orphan

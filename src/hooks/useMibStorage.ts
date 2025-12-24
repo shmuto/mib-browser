@@ -21,7 +21,12 @@ import { generateId } from '../lib/storage';
 import { flattenTree, parseMibModule, validateMibContent } from '../lib/mib-parser';
 import { MibTreeBuilder } from '../lib/mib-tree-builder';
 
-export function useMibStorage() {
+interface UseMibStorageOptions {
+  onNotification?: (type: 'error' | 'warning' | 'success' | 'info', title: string, details?: string[]) => void;
+}
+
+export function useMibStorage(options: UseMibStorageOptions = {}) {
+  const { onNotification } = options;
   const [mibs, setMibs] = useState<StoredMibData[]>([]);
   const [mergedTree, setMergedTree] = useState<MibNode[]>([]);
   const [storageInfo, setStorageInfo] = useState<StorageInfo>({
@@ -246,11 +251,20 @@ export function useMibStorage() {
 
         await saveMib(mib);
       }
+
+      // エラーファイルがあれば通知
+      if (errorFiles.size > 0 && onNotification) {
+        const errorDetails = allMibs
+          .filter(mib => errorFiles.has(mib.fileName))
+          .map(mib => `${mib.fileName}: ${mib.error || 'Unknown error'}`);
+
+        onNotification('warning', `${errorFiles.size} file(s) have missing dependencies`, errorDetails);
+      }
     } catch (error) {
       console.error('Failed to rebuild trees:', error);
       throw error;
     }
-  }, []);
+  }, [onNotification]);
 
   // MIBファイルをアップロード（3パスアプローチ使用）
   const uploadMib = useCallback(async (file: File, _forceUpload = false, skipReload = false): Promise<UploadResult> => {

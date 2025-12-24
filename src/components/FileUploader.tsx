@@ -8,6 +8,7 @@ interface FileUploaderProps {
   onUpload: (file: File, forceUpload?: boolean, skipReload?: boolean) => Promise<UploadResult>;
   onUploadFromText?: (content: string, fileName: string) => Promise<UploadResult>;
   onReload?: () => Promise<void>;
+  onNotification?: (type: 'error' | 'warning' | 'success' | 'info', title: string, details?: string[]) => void;
 }
 
 interface UploadProgress {
@@ -17,7 +18,7 @@ interface UploadProgress {
   totalFiles: number;
 }
 
-export default function FileUploader({ onUpload, onUploadFromText, onReload }: FileUploaderProps) {
+export default function FileUploader({ onUpload, onUploadFromText, onReload, onNotification }: FileUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
     isUploading: false,
@@ -39,10 +40,15 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload }: F
         await onReload();
       }
       toast.success('MIB added successfully from text');
+    } else {
+      // 失敗を通知パネルに追加
+      if (onNotification) {
+        onNotification('error', 'Failed to upload MIB from text', [`${fileName}: ${result.error || 'Unknown error'}`]);
+      }
     }
 
     return result;
-  }, [onUploadFromText, onReload]);
+  }, [onUploadFromText, onReload, onNotification]);
 
   const processUpload = useCallback(async (file: File, skipReload = false, fileIndex: number, totalFiles: number) => {
     // Update progress
@@ -95,6 +101,15 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload }: F
         failureCount++;
       }
     });
+
+    // 失敗したファイルを通知パネルに追加
+    if (failureCount > 0 && onNotification) {
+      const failedDetails = results
+        .filter(({ result }) => !result.success)
+        .map(({ file, result }) => `${file.name}: ${result.error || 'Unknown error'}`);
+
+      onNotification('error', `${failureCount} file(s) failed to upload`, failedDetails);
+    }
 
     if (results.length === 1) {
       // 単一ファイルの場合は個別にメッセージを表示
@@ -152,7 +167,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload }: F
         toast.success(message);
       }
     }
-  }, []);
+  }, [onNotification]);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;

@@ -16,10 +16,19 @@ import TreeExpandControls from './components/TreeExpandControls';
 import MibContentModal from './components/MibContentModal';
 import ResizablePanel from './components/ResizablePanel';
 import ConflictNotificationPanel from './components/ConflictNotificationPanel';
+import NotificationPanel, { useNotifications } from './components/NotificationPanel';
 import { Database } from 'lucide-react';
 import { SiGithub } from 'react-icons/si';
 
 export default function App() {
+  // Notification panel (must be before useMibStorage to pass callback)
+  const {
+    notifications,
+    addNotification,
+    dismissNotification,
+    clearAllNotifications,
+  } = useNotifications();
+
   const {
     mibs,
     mergedTree,
@@ -31,7 +40,7 @@ export default function App() {
     removeMibs,
     clearAll,
     reload,
-  } = useMibStorage();
+  } = useMibStorage({ onNotification: addNotification });
 
   const [selectedNode, setSelectedNode] = useState<MibNode | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -202,6 +211,13 @@ export default function App() {
       {/* Conflict Notification Panel */}
       <ConflictNotificationPanel mibs={mibs} onDeleteFile={handleConflictDelete} />
 
+      {/* Upload Error Notification Panel */}
+      <NotificationPanel
+        notifications={notifications}
+        onDismiss={dismissNotification}
+        onClearAll={clearAllNotifications}
+      />
+
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Resizable Sidebar and Main Content */}
@@ -214,7 +230,7 @@ export default function App() {
             <aside className="bg-white border-r border-gray-200 flex flex-col h-full">
               <div className="p-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-800 mb-4">Saved MIBs</h2>
-                <FileUploader onUpload={handleUpload} onUploadFromText={uploadMibFromText} onReload={reload} />
+                <FileUploader onUpload={handleUpload} onUploadFromText={uploadMibFromText} onReload={reload} onNotification={addNotification} />
               </div>
 
               <div className="flex-1 overflow-y-auto">
