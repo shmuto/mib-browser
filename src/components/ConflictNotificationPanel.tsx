@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import type { StoredMibData, MibConflict } from '../types/mib';
+import ConfirmModal from './ConfirmModal';
 
 interface ConflictPair {
   file1: StoredMibData;
@@ -15,6 +16,12 @@ interface ConflictNotificationPanelProps {
 
 export default function ConflictNotificationPanel({ mibs, onDeleteFile }: ConflictNotificationPanelProps) {
   const [selectedConflict, setSelectedConflict] = useState<ConflictPair | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    fileId: string;
+    fileName: string;
+    keepFileName: string;
+  } | null>(null);
 
   // すべての競合ペアを抽出
   const conflictPairs = useMemo(() => {
@@ -171,22 +178,26 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
               <p className="text-sm text-gray-600">Choose which file to keep:</p>
               <div className="flex gap-3">
                 <button
-                  onClick={async () => {
-                    if (confirm(`Delete ${selectedConflict.file1.fileName}?\nThis will keep ${selectedConflict.file2.fileName}.`)) {
-                      await onDeleteFile(selectedConflict.file1.id);
-                      setSelectedConflict(null);
-                    }
+                  onClick={() => {
+                    setDeleteConfirm({
+                      isOpen: true,
+                      fileId: selectedConflict.file1.id,
+                      fileName: selectedConflict.file1.fileName,
+                      keepFileName: selectedConflict.file2.fileName,
+                    });
                   }}
                   className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm font-medium"
                 >
                   Delete {selectedConflict.file1.fileName}
                 </button>
                 <button
-                  onClick={async () => {
-                    if (confirm(`Delete ${selectedConflict.file2.fileName}?\nThis will keep ${selectedConflict.file1.fileName}.`)) {
-                      await onDeleteFile(selectedConflict.file2.id);
-                      setSelectedConflict(null);
-                    }
+                  onClick={() => {
+                    setDeleteConfirm({
+                      isOpen: true,
+                      fileId: selectedConflict.file2.id,
+                      fileName: selectedConflict.file2.fileName,
+                      keepFileName: selectedConflict.file1.fileName,
+                    });
                   }}
                   className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm font-medium"
                 >
@@ -202,6 +213,22 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
             </div>
           </div>
         </div>
+      )}
+
+      {/* Delete Confirm Modal */}
+      {deleteConfirm && (
+        <ConfirmModal
+          isOpen={deleteConfirm.isOpen}
+          title="Delete File"
+          message={`Delete ${deleteConfirm.fileName}?\nThis will keep ${deleteConfirm.keepFileName}.`}
+          confirmLabel="Delete"
+          onConfirm={async () => {
+            await onDeleteFile(deleteConfirm.fileId);
+            setDeleteConfirm(null);
+            setSelectedConflict(null);
+          }}
+          onCancel={() => setDeleteConfirm(null)}
+        />
       )}
     </>
   );

@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import type { StorageInfo } from '../types/mib';
 import { Trash2, HardDrive } from 'lucide-react';
 import { formatFileSize } from '../lib/storage';
+import ConfirmModal from './ConfirmModal';
 
 interface StorageManagerProps {
   storageInfo: StorageInfo;
@@ -8,11 +10,15 @@ interface StorageManagerProps {
 }
 
 export default function StorageManager({ storageInfo, onClearAll }: StorageManagerProps) {
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
-  const handleClearAll = async () => {
-    if (confirm('Delete all MIB data? This operation cannot be undone.')) {
-      await onClearAll();
-    }
+  const handleClearAll = () => {
+    setIsConfirmOpen(true);
+  };
+
+  const handleConfirmClearAll = async () => {
+    setIsConfirmOpen(false);
+    await onClearAll();
   };
 
   return (
@@ -50,6 +56,16 @@ export default function StorageManager({ storageInfo, onClearAll }: StorageManag
       <p className="text-xs text-gray-400 mt-2 text-center">
         Page unresponsive? Add <code className="bg-gray-200 px-1 rounded">?reset=true</code> to URL
       </p>
+
+      {/* Confirm Modal */}
+      <ConfirmModal
+        isOpen={isConfirmOpen}
+        title="Clear All Data"
+        message="Delete all MIB data? This operation cannot be undone."
+        confirmLabel="Delete All"
+        onConfirm={handleConfirmClearAll}
+        onCancel={() => setIsConfirmOpen(false)}
+      />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import type { StoredMibData } from '../types/mib';
 import { FileText, Trash2, Download, CheckSquare, Square, Search, X, AlertTriangle } from 'lucide-react';
 import { formatFileSize } from '../lib/storage';
+import ConfirmModal from './ConfirmModal';
 
 type SortField = 'name' | 'uploadedAt' | 'size';
 type SortOrder = 'asc' | 'desc';
@@ -27,6 +28,19 @@ export default function SavedMibsList({
   const [searchQuery, setSearchQuery] = useState('');
   const [sortField, setSortField] = useState<SortField>('uploadedAt');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+
+  // Confirm modal state
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   const toggleSelection = useCallback((id: string, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -84,20 +98,26 @@ export default function SavedMibsList({
     }
   }, [selectedIds.size, filteredMibs]);
 
-  const handleBulkDelete = useCallback(async () => {
+  const handleBulkDelete = useCallback(() => {
     if (selectedIds.size === 0) return;
 
-    if (confirm(`Delete ${selectedIds.size} selected file(s)?`)) {
-      if (onBulkDelete) {
-        await onBulkDelete(Array.from(selectedIds));
-      } else {
-        // Fallback to individual deletes
-        for (const id of selectedIds) {
-          await onDelete(id);
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Files',
+      message: `Delete ${selectedIds.size} selected file(s)?`,
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        if (onBulkDelete) {
+          await onBulkDelete(Array.from(selectedIds));
+        } else {
+          // Fallback to individual deletes
+          for (const id of selectedIds) {
+            await onDelete(id);
+          }
         }
-      }
-      setSelectedIds(new Set());
-    }
+        setSelectedIds(new Set());
+      },
+    });
   }, [selectedIds, onBulkDelete, onDelete]);
 
   const handleBulkDownload = useCallback(() => {
@@ -299,11 +319,17 @@ export default function SavedMibsList({
                     {/* Delete */}
                     <td className="px-2 py-2">
                       <button
-                        onClick={async (e) => {
+                        onClick={(e) => {
                           e.stopPropagation();
-                          if (confirm(`Delete ${mib.fileName}?`)) {
-                            await onDelete(mib.id);
-                          }
+                          setConfirmModal({
+                            isOpen: true,
+                            title: 'Delete File',
+                            message: `Delete ${mib.fileName}?`,
+                            onConfirm: async () => {
+                              setConfirmModal(prev => ({ ...prev, isOpen: false }));
+                              await onDelete(mib.id);
+                            },
+                          });
                         }}
                         className="p-1 hover:bg-red-100 rounded text-gray-400 hover:text-red-600 transition-colors"
                         title="Delete"
@@ -318,6 +344,16 @@ export default function SavedMibsList({
           </table>
         )}
       </div>
+
+      {/* Confirm Modal */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        confirmLabel="Delete"
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }
