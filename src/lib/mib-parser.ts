@@ -51,16 +51,17 @@ export function validateMibContent(content: string): { isValid: boolean; error?:
     };
   }
 
-  // Check 4: Should have at least one of: OBJECT-TYPE, OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY
+  // Check 4: Should have at least one of: OBJECT-TYPE, OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY, NOTIFICATION-TYPE
   const hasObjectType = /OBJECT-TYPE/i.test(content);
   const hasObjectIdentifier = /OBJECT\s+IDENTIFIER/i.test(content);
   const hasModuleIdentity = /MODULE-IDENTITY/i.test(content);
   const hasObjectIdentity = /OBJECT-IDENTITY/i.test(content);
+  const hasNotificationType = /NOTIFICATION-TYPE/i.test(content);
 
-  if (!hasObjectType && !hasObjectIdentifier && !hasModuleIdentity && !hasObjectIdentity) {
+  if (!hasObjectType && !hasObjectIdentifier && !hasModuleIdentity && !hasObjectIdentity && !hasNotificationType) {
     return {
       isValid: false,
-      error: 'Invalid MIB file: No OBJECT-TYPE, OBJECT IDENTIFIER, MODULE-IDENTITY, or OBJECT-IDENTITY definitions found',
+      error: 'Invalid MIB file: No OBJECT-TYPE, OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY, or NOTIFICATION-TYPE definitions found',
     };
   }
 
@@ -700,14 +701,15 @@ export function parseMibModule(content: string, fileName?: string): import('../t
 
   const objects: import('../types/mib').RawMibObject[] = [];
 
-  // Add OID assignments (OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY)
-  oidAssignments.forEach(({ name, parent, subids, description, type }) => {
+  // Add OID assignments (OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY, NOTIFICATION-TYPE)
+  oidAssignments.forEach(({ name, parent, subids, description, type, status }) => {
     objects.push({
       name,
       parentName: parent,
       subid: subids.length === 1 ? subids[0] : subids,
       type: type || 'OBJECT IDENTIFIER',
       description,
+      status,
       fileName,
     });
   });
@@ -773,8 +775,8 @@ function parseOidBlock(blockContent: string): { parent: string; subids: number[]
  */
 function extractOidAssignmentsRaw(
   content: string
-): Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string }> {
-  const assignments: Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string }> = [];
+): Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string; status?: string }> {
+  const assignments: Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string; status?: string }> = [];
 
   // Pattern 1: identifier OBJECT IDENTIFIER ::= { ... }
   // Now supports both simple and named number formats
@@ -839,6 +841,34 @@ function extractOidAssignmentsRaw(
       subids: parsed.subids,
       description,
       type: 'OBJECT-IDENTITY',
+    });
+  }
+
+  // Pattern 4: identifier NOTIFICATION-TYPE ... ::= { ... }
+  const pattern4 = /^\s*(\w+)\s+NOTIFICATION-TYPE[\s\S]*?::=\s*(\{[^}]+\})/gim;
+
+  while ((match = pattern4.exec(content)) !== null) {
+    const name = match[1];
+    if (name === 'IMPORTS') continue;
+
+    const parsed = parseOidBlock(match[2]);
+    if (!parsed) continue;
+
+    const fullMatch = match[0];
+    const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
+    const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
+
+    // Extract STATUS
+    const statusMatch = fullMatch.match(/STATUS\s+([\w\-]+)/i);
+    const status = statusMatch ? statusMatch[1].trim() : '';
+
+    assignments.push({
+      name,
+      parent: parsed.parent,
+      subids: parsed.subids,
+      description,
+      type: 'NOTIFICATION-TYPE',
+      status,
     });
   }
 
