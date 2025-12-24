@@ -196,6 +196,65 @@ export function generateId(): string {
 }
 
 /**
+ * ファイル名をサニタイズ（パストラバーサル対策、XSS対策）
+ * @param fileName 元のファイル名
+ * @returns サニタイズされたファイル名
+ */
+export function sanitizeFileName(fileName: string): string {
+  if (!fileName || typeof fileName !== 'string') {
+    return 'unnamed';
+  }
+
+  // パストラバーサル文字を除去
+  let sanitized = fileName
+    .replace(/\.\./g, '')           // .. を除去
+    .replace(/[\/\\]/g, '_')        // / と \ を _ に置換
+    .replace(/[\x00-\x1f\x7f]/g, '') // 制御文字を除去
+    .replace(/[<>:"|?*]/g, '_')     // Windows禁止文字を _ に置換
+    .trim();
+
+  // 空になった場合のフォールバック
+  if (!sanitized) {
+    return 'unnamed';
+  }
+
+  // 最大長制限（255バイト）
+  if (sanitized.length > 255) {
+    const ext = sanitized.lastIndexOf('.');
+    if (ext > 0 && ext > sanitized.length - 10) {
+      // 拡張子を保持
+      const extension = sanitized.substring(ext);
+      sanitized = sanitized.substring(0, 255 - extension.length) + extension;
+    } else {
+      sanitized = sanitized.substring(0, 255);
+    }
+  }
+
+  return sanitized;
+}
+
+/**
+ * StoredMibDataの構造を検証
+ * @param data 検証するデータ
+ * @returns 有効な場合true
+ */
+export function isValidStoredMibData(data: unknown): data is StoredMibData {
+  if (!data || typeof data !== 'object') return false;
+
+  const mib = data as Record<string, unknown>;
+
+  return (
+    typeof mib.id === 'string' &&
+    typeof mib.fileName === 'string' &&
+    typeof mib.content === 'string' &&
+    typeof mib.nodeCount === 'number' &&
+    typeof mib.uploadedAt === 'number' &&
+    typeof mib.lastAccessedAt === 'number' &&
+    typeof mib.size === 'number'
+  );
+}
+
+/**
  * ファイルサイズを人間が読みやすい形式に変換
  * @param bytes バイト数
  * @returns フォーマットされた文字列

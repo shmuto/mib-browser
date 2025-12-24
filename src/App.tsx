@@ -3,6 +3,7 @@ import type { MibNode, StoredMibData } from './types/mib';
 import { useMibStorage } from './hooks/useMibStorage';
 import { filterTreeByQuery } from './lib/mib-parser';
 import { getOidPath } from './lib/oid-utils';
+import { sanitizeFileName } from './lib/storage';
 import toast, { Toaster } from 'react-hot-toast';
 
 // Components
@@ -106,9 +107,10 @@ export default function App() {
       const url = URL.createObjectURL(blob);
 
       // Create a temporary link and trigger download
+      // セキュリティ: ファイル名をサニタイズしてパストラバーサル攻撃を防止
       const link = document.createElement('a');
       link.href = url;
-      link.download = mib.fileName;
+      link.download = sanitizeFileName(mib.fileName);
       document.body.appendChild(link);
       link.click();
 

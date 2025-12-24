@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { X, FileText, Loader2 } from 'lucide-react';
+import { sanitizeFileName } from '../lib/storage';
 
 interface TextInputModalProps {
   isOpen: boolean;
@@ -46,11 +47,18 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
       return;
     }
 
+    // セキュリティ: ファイル名をサニタイズ
+    const sanitizedFileName = sanitizeFileName(fileName.trim());
+    if (sanitizedFileName === 'unnamed') {
+      setError('Invalid file name');
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
     try {
-      const result = await onSubmit(content, fileName.trim());
+      const result = await onSubmit(content, sanitizedFileName);
       if (result.success) {
         onClose();
       } else {

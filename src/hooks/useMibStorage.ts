@@ -17,7 +17,7 @@ import {
   loadMergedTree,
   clearMergedTree,
 } from '../lib/indexeddb';
-import { generateId } from '../lib/storage';
+import { generateId, isValidStoredMibData } from '../lib/storage';
 import { flattenTree, parseMibModule, validateMibContent } from '../lib/mib-parser';
 import { MibTreeBuilder } from '../lib/mib-tree-builder';
 
@@ -39,8 +39,10 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
   // 初期読み込み
   useEffect(() => {
     // URLパラメータで?reset=trueがある場合はデータをクリア
+    // セキュリティ: ホワイトリストで許可されたパラメータのみ処理（現在は'reset'のみ）
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('reset') === 'true') {
+    const resetParam = urlParams.get('reset');
+    if (resetParam === 'true') {
       // URLからresetパラメータを削除
       urlParams.delete('reset');
       const newUrl = urlParams.toString()
@@ -398,8 +400,30 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
   // インポート
   const importData = useCallback(async (json: string): Promise<boolean> => {
     try {
-      const mibs: StoredMibData[] = JSON.parse(json);
-      for (const mib of mibs) {
+      const parsed = JSON.parse(json);
+
+      // セキュリティ: JSONデータの構造を検証
+      if (!Array.isArray(parsed)) {
+        console.error('Invalid import data: expected an array');
+        return false;
+      }
+
+      // 各MIBの構造を検証
+      const validMibs: StoredMibData[] = [];
+      for (const item of parsed) {
+        if (isValidStoredMibData(item)) {
+          validMibs.push(item);
+        } else {
+          console.warn('Skipping invalid MIB data:', item);
+        }
+      }
+
+      if (validMibs.length === 0) {
+        console.error('No valid MIB data found in import');
+        return false;
+      }
+
+      for (const mib of validMibs) {
         await saveMib(mib);
       }
       await loadData();
