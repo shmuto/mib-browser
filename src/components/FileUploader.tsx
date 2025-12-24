@@ -124,7 +124,22 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload }: F
       const message = `✓ ${parts.join(', ')}`;
 
       if (failureCount > 0) {
-        toast.error(message);
+        // 失敗したファイル名を収集
+        const failedFiles = results
+          .filter(({ result }) => !result.success)
+          .map(({ file, result }) => `${file.name}: ${result.error || 'Unknown error'}`);
+
+        toast.error(
+          <div>
+            <div>{message}</div>
+            <div className="mt-1 text-xs opacity-80">
+              {failedFiles.map((f, i) => (
+                <div key={i}>• {f}</div>
+              ))}
+            </div>
+          </div>,
+          { duration: 6000 }
+        );
       } else if (conflictCount > 0) {
         toast(message, {
           icon: '⚠️',
