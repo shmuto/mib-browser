@@ -872,6 +872,87 @@ function extractOidAssignmentsRaw(
     });
   }
 
+  // Pattern 5: identifier MODULE-COMPLIANCE ... ::= { ... }
+  const pattern5 = /^\s*(\w+)\s+MODULE-COMPLIANCE[\s\S]*?::=\s*(\{[^}]+\})/gim;
+
+  while ((match = pattern5.exec(content)) !== null) {
+    const name = match[1];
+    if (name === 'IMPORTS') continue;
+
+    const parsed = parseOidBlock(match[2]);
+    if (!parsed) continue;
+
+    const fullMatch = match[0];
+    const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
+    const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
+
+    const statusMatch = fullMatch.match(/STATUS\s+([\w\-]+)/i);
+    const status = statusMatch ? statusMatch[1].trim() : '';
+
+    assignments.push({
+      name,
+      parent: parsed.parent,
+      subids: parsed.subids,
+      description,
+      type: 'MODULE-COMPLIANCE',
+      status,
+    });
+  }
+
+  // Pattern 6: identifier OBJECT-GROUP ... ::= { ... }
+  const pattern6 = /^\s*(\w+)\s+OBJECT-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
+
+  while ((match = pattern6.exec(content)) !== null) {
+    const name = match[1];
+    if (name === 'IMPORTS') continue;
+
+    const parsed = parseOidBlock(match[2]);
+    if (!parsed) continue;
+
+    const fullMatch = match[0];
+    const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
+    const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
+
+    const statusMatch = fullMatch.match(/STATUS\s+([\w\-]+)/i);
+    const status = statusMatch ? statusMatch[1].trim() : '';
+
+    assignments.push({
+      name,
+      parent: parsed.parent,
+      subids: parsed.subids,
+      description,
+      type: 'OBJECT-GROUP',
+      status,
+    });
+  }
+
+  // Pattern 7: identifier NOTIFICATION-GROUP ... ::= { ... }
+  const pattern7 = /^\s*(\w+)\s+NOTIFICATION-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
+
+  while ((match = pattern7.exec(content)) !== null) {
+    const name = match[1];
+    if (name === 'IMPORTS') continue;
+
+    const parsed = parseOidBlock(match[2]);
+    if (!parsed) continue;
+
+    const fullMatch = match[0];
+    const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
+    const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
+
+    const statusMatch = fullMatch.match(/STATUS\s+([\w\-]+)/i);
+    const status = statusMatch ? statusMatch[1].trim() : '';
+
+    assignments.push({
+      name,
+      parent: parsed.parent,
+      subids: parsed.subids,
+      description,
+      type: 'NOTIFICATION-GROUP',
+      status,
+    });
+  }
+
   return assignments;
 }
 
