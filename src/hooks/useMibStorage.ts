@@ -38,7 +38,21 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
 
   // 初期読み込み
   useEffect(() => {
-    loadData();
+    // URLパラメータで?reset=trueがある場合はデータをクリア
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('reset') === 'true') {
+      // URLからresetパラメータを削除
+      urlParams.delete('reset');
+      const newUrl = urlParams.toString()
+        ? `${window.location.pathname}?${urlParams.toString()}`
+        : window.location.pathname;
+      window.history.replaceState({}, '', newUrl);
+
+      // データをクリアしてからロード
+      clearAllMibs().then(() => clearMergedTree()).then(() => loadData());
+    } else {
+      loadData();
+    }
   }, []);
 
   // データ読み込み

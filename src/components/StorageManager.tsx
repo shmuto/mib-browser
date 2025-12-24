@@ -46,6 +46,10 @@ export default function StorageManager({ storageInfo, onClearAll }: StorageManag
         <Trash2 size={16} />
         <span>Clear All</span>
       </button>
+
+      <p className="text-xs text-gray-400 mt-2 text-center">
+        Page unresponsive? Add <code className="bg-gray-200 px-1 rounded">?reset=true</code> to URL
+      </p>
     </div>
   );
 }
