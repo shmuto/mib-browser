@@ -22,7 +22,7 @@ export default function ConfirmModal({
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
-  // ESCキーで閉じる
+  // Close on ESC key
   useEffect(() => {
     if (!isOpen) return;
 
@@ -36,7 +36,7 @@ export default function ConfirmModal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onCancel]);
 
-  // 背景クリックで閉じる
+  // Close on background click
   const handleBackgroundClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       onCancel();

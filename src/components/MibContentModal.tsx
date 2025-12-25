@@ -8,7 +8,7 @@ interface MibContentModalProps {
 }
 
 export default function MibContentModal({ mib, onClose }: MibContentModalProps) {
-  // ESCキーで閉じる
+  // Close on ESC key
   useEffect(() => {
     if (!mib) return;
 
@@ -24,7 +24,7 @@ export default function MibContentModal({ mib, onClose }: MibContentModalProps) 
 
   if (!mib) return null;
 
-  // 背景クリックで閉じる
+  // Close on background click
   const handleBackgroundClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       onClose();

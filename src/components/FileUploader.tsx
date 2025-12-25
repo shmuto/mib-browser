@@ -41,7 +41,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
       }
       toast.success('MIB added successfully from text');
     } else {
-      // 失敗を通知パネルに追加
+      // Add failure to notification panel
       if (onNotification) {
         onNotification('error', 'Failed to upload MIB from text', [`${fileName}: ${result.error || 'Unknown error'}`]);
       }
@@ -74,11 +74,11 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
 
     const [nextFile, ...rest] = files;
 
-    // 残りのファイルがある場合はskipReloadを有効にする
+    // Enable skipReload if there are remaining files
     const skipReload = rest.length > 0;
     const uploadResult = await processUpload(nextFile, skipReload, startIndex, totalFiles);
 
-    // 次のファイルを処理
+    // Process next file
     const remainingResults = await processRemainingFiles(rest, startIndex + 1, totalFiles);
     return [uploadResult, ...remainingResults];
   }, [processUpload]);
@@ -102,7 +102,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
       }
     });
 
-    // 失敗したファイルを通知パネルに追加
+    // Add failed files to notification panel
     if (failureCount > 0 && onNotification) {
       const failedDetails = results
         .filter(({ result }) => !result.success)
@@ -112,7 +112,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
     }
 
     if (results.length === 1) {
-      // 単一ファイルの場合は個別にメッセージを表示
+      // Show individual message for single file
       const { file, result } = results[0];
       if (result.success) {
         if (result.conflicts && result.conflicts.length > 0) {
@@ -130,7 +130,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         toast.error(`✗ Failed to upload ${file.name}: ${result.error || 'Unknown error'}`);
       }
     } else {
-      // 複数ファイルの場合はサマリーを表示
+      // Show summary for multiple files
       const parts: string[] = [];
       if (successCount > 0) parts.push(`${successCount} uploaded`);
       if (conflictCount > 0) parts.push(`${conflictCount} with conflicts`);
@@ -139,7 +139,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
       const message = `✓ ${parts.join(', ')}`;
 
       if (failureCount > 0) {
-        // 失敗したファイル名を収集
+        // Collect failed file names
         const failedFiles = results
           .filter(({ result }) => !result.success)
           .map(({ file, result }) => `${file.name}: ${result.error || 'Unknown error'}`);
@@ -190,10 +190,10 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         totalFiles: totalFiles,
       });
 
-      // 最初のファイルを処理
+      // Process first file
       const [firstFile, ...rest] = fileArray;
 
-      // 残りのファイルがある場合は skipReload を有効にする
+      // Enable skipReload if there are remaining files
       const skipReload = rest.length > 0;
       const firstResult = await processUpload(firstFile, skipReload, 1, totalFiles);
 
@@ -204,12 +204,12 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         allResults = [...allResults, ...remainingResults];
       }
 
-      // リロードを実行
+      // Execute reload
       if (onReload) {
         await onReload();
       }
 
-      // サマリーを表示
+      // Show summary
       showUploadSummary(allResults);
     } finally {
       // Reset upload progress
@@ -246,10 +246,10 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         totalFiles: totalFiles,
       });
 
-      // 最初のファイルを処理
+      // Process first file
       const [firstFile, ...rest] = fileArray;
 
-      // 残りのファイルがある場合は skipReload を有効にする
+      // Enable skipReload if there are remaining files
       const skipReload = rest.length > 0;
       const firstResult = await processUpload(firstFile, skipReload, 1, totalFiles);
 
@@ -260,12 +260,12 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         allResults = [...allResults, ...remainingResults];
       }
 
-      // リロードを実行
+      // Execute reload
       if (onReload) {
         await onReload();
       }
 
-      // サマリーを表示
+      // Show summary
       showUploadSummary(allResults);
     } finally {
       // Reset upload progress

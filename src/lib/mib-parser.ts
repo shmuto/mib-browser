@@ -1,6 +1,6 @@
 /**
- * 簡易MIBパーサー
- * 完全なSMI/ASN.1パーサーではなく、基本的なOBJECT-TYPEとOID定義を抽出
+ * Simple MIB Parser
+ * Not a complete SMI/ASN.1 parser, but extracts basic OBJECT-TYPE and OID definitions
  */
 
 import type { FlatMibNode, MibNode, ParseResult, ParseError } from '../types/mib';
@@ -69,10 +69,10 @@ export function validateMibContent(content: string): { isValid: boolean; error?:
 }
 
 /**
- * MIBファイルをパース
- * @param content MIBファイルの内容
- * @param externalOidMap 他のMIBファイルで定義されたOIDマップ（オプション）
- * @returns パース結果（mibNameを含む）
+ * Parse MIB file
+ * @param content MIB file content
+ * @param externalOidMap OID map from other MIB files (optional)
+ * @returns Parse result (including mibName)
  */
 export function parseMibFile(
   content: string,
@@ -80,10 +80,10 @@ export function parseMibFile(
 ): ParseResult & { mibName: string | null } {
   const errors: ParseError[] = [];
   const nodes: FlatMibNode[] = [];
-  const oidMap: Map<string, string> = new Map(); // 名前 -> OID のマッピング
+  const oidMap: Map<string, string> = new Map(); // name -> OID mapping
   const mibName = extractMibName(content);
 
-  // 外部OIDマップをマージ（他のMIBファイルで定義されたOID）
+  // Merge external OID map (OIDs defined in other MIB files)
   if (externalOidMap) {
     externalOidMap.forEach((oid, name) => {
       oidMap.set(name, oid);
@@ -91,16 +91,16 @@ export function parseMibFile(
   }
 
   try {
-    // コメントを削除
+    // Remove comments
     let cleanedContent = removeComments(content);
 
-    // IMPORTSブロックを解析して、インポートされた識別子を取得
+    // Parse IMPORTS block to get imported identifiers
     const imports = extractImports(cleanedContent);
 
-    // インポートされた識別子のOIDをexternalOidMapから解決
+    // Resolve imported identifier OIDs from externalOidMap
     if (externalOidMap) {
       imports.forEach((_sourceMib, identifier) => {
-        // externalOidMapから識別子のOIDを検索
+        // Look up identifier OID from externalOidMap
         const resolvedOid = externalOidMap.get(identifier);
         if (resolvedOid) {
           oidMap.set(identifier, resolvedOid);
@@ -108,19 +108,19 @@ export function parseMibFile(
       });
     }
 
-    // IMPORTSブロックを削除（パース干渉を防ぐため）
+    // Remove IMPORTS block (to prevent parsing interference)
     cleanedContent = cleanedContent.replace(/IMPORTS[\s\S]*?;/gi, '');
 
-    // OBJECT IDENTIFIER定義を抽出（現在のoidMapを渡して参照できるようにする）
+    // Extract OBJECT IDENTIFIER definitions (pass current oidMap for reference)
     const oidAssignments = extractOidAssignments(cleanedContent, oidMap);
     oidAssignments.forEach(({ name, oid }) => {
       oidMap.set(name, oid);
     });
 
-    // OBJECT-TYPE定義を抽出
+    // Extract OBJECT-TYPE definitions
     const objectTypes = extractObjectTypes(cleanedContent);
 
-    // 各OBJECT-TYPEをパース
+    // Parse each OBJECT-TYPE
     objectTypes.forEach((objType, index) => {
       try {
         const node = parseObjectType(objType, oidMap);
@@ -140,9 +140,9 @@ export function parseMibFile(
       }
     });
 
-    // OBJECT IDENTIFIER定義もノードとして追加
+    // Add OBJECT IDENTIFIER definitions as nodes
     oidAssignments.forEach(({ name, oid, description, type }) => {
-      // すでにOBJECT-TYPEとして存在しない場合のみ追加
+      // Only add if not already exists as OBJECT-TYPE
       if (!nodes.find(n => n.name === name)) {
         nodes.push({
           oid,
@@ -174,12 +174,12 @@ export function parseMibFile(
 }
 
 /**
- * フラットなノードリストからツリー構造を構築
- * @param flatNodes フラットなノードリスト
- * @returns ツリー構造のルートノード配列
+ * Build tree structure from flat node list
+ * @param flatNodes Flat node list
+ * @returns Array of root nodes in tree structure
  */
 export function buildTree(flatNodes: FlatMibNode[]): MibNode[] {
-  // ノードをOIDでソート
+  // Sort nodes by OID
   const sortedNodes = [...flatNodes].sort((a, b) => {
     const aLen = a.oid.split('.').length;
     const bLen = b.oid.split('.').length;
@@ -187,7 +187,7 @@ export function buildTree(flatNodes: FlatMibNode[]): MibNode[] {
     return a.oid.localeCompare(b.oid);
   });
 
-  // OIDをキーとしたマップを作成
+  // Create map with OID as key
   const nodeMap: Map<string, MibNode> = new Map();
 
   sortedNodes.forEach(flat => {
@@ -200,21 +200,21 @@ export function buildTree(flatNodes: FlatMibNode[]): MibNode[] {
 
   const rootNodes: MibNode[] = [];
 
-  // 親子関係を構築
+  // Build parent-child relationships
   sortedNodes.forEach(flat => {
     const node = nodeMap.get(flat.oid);
     if (!node) return;
 
     if (!flat.parent) {
-      // ルートノード
+      // Root node
       rootNodes.push(node);
     } else {
-      // 親ノードを探す
+      // Find parent node
       const parentNode = nodeMap.get(flat.parent);
       if (parentNode) {
         parentNode.children.push(node);
       } else {
-        // 親が見つからない場合はルートに追加
+        // Add to root if parent not found
         rootNodes.push(node);
       }
     }
@@ -224,24 +224,24 @@ export function buildTree(flatNodes: FlatMibNode[]): MibNode[] {
 }
 
 /**
- * IMPORTSブロックから識別子とソースMIBを抽出
- * @param content MIBファイルの内容
- * @returns インポートされた識別子とそのソースMIB名のマップ
+ * Extract identifiers and source MIBs from IMPORTS block
+ * @param content MIB file content
+ * @returns Map of imported identifiers to their source MIB names
  */
 function extractImports(content: string): Map<string, string> {
   const imports = new Map<string, string>();
 
-  // IMPORTSブロックを見つける
+  // Find IMPORTS block
   const importsMatch = content.match(/IMPORTS([\s\S]*?);/i);
   if (!importsMatch) return imports;
 
   const importsBlock = importsMatch[1];
 
-  // "FROM module-name" のパターンで分割
-  // 例: "aristaProducts FROM ARISTA-SMI-MIB"
+  // Split by "FROM module-name" pattern
+  // Example: "aristaProducts FROM ARISTA-SMI-MIB"
   const fromPattern = /FROM\s+([\w\-]+)/gi;
 
-  // FROM の位置を特定し、その前の識別子とセットにする
+  // Identify FROM positions and pair with preceding identifiers
   let currentPos = 0;
   let match;
 
@@ -249,21 +249,21 @@ function extractImports(content: string): Map<string, string> {
     const moduleName = match[1];
     const endPos = match.index;
 
-    // 前回のFROMの終わりから今回のFROMの前までの部分を取得
+    // Get text from end of last FROM to current FROM
     const identifiersText = importsBlock.substring(currentPos, endPos);
 
-    // 識別子を抽出（カンマと改行で分割、空白を除去）
+    // Extract identifiers (split by comma and newline, remove whitespace)
     const identifiers = identifiersText
       .split(/[,\n]/)
       .map(id => id.trim())
       .filter(id => id && id !== 'FROM' && !/^[\s\n]*$/.test(id));
 
-    // 各識別子にソースMIB名を関連付け
+    // Associate each identifier with source MIB name
     identifiers.forEach(identifier => {
       imports.set(identifier, moduleName);
     });
 
-    // 次の検索開始位置を更新（FROM module-nameの後）
+    // Update next search start position (after FROM module-name)
     currentPos = match.index + match[0].length;
   }
 
@@ -271,15 +271,15 @@ function extractImports(content: string): Map<string, string> {
 }
 
 /**
- * コメントを削除
+ * Remove comments
  */
 function removeComments(content: string): string {
-  // -- で始まる行末までのコメントを削除
+  // Remove comments starting with -- to end of line
   return content.replace(/--[^\n]*/g, '');
 }
 
 /**
- * OBJECT IDENTIFIER定義を抽出
+ * Extract OBJECT IDENTIFIER definitions
  */
 function extractOidAssignments(
   content: string,
@@ -287,54 +287,54 @@ function extractOidAssignments(
 ): Array<{ name: string; oid: string; description?: string; type?: string }> {
   const assignments: Array<{ name: string; oid: string; description?: string; type?: string }> = [];
 
-  // パターン1: identifier OBJECT IDENTIFIER ::= { parent child1 child2 ... }
-  // 複数の番号に対応（例: { aristaProducts 3011 7124 3282 }）
+  // Pattern 1: identifier OBJECT IDENTIFIER ::= { parent child1 child2 ... }
+  // Supports multiple numbers (e.g., { aristaProducts 3011 7124 3282 })
   const pattern1 = /(\w+)\s+OBJECT\s+IDENTIFIER\s*::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gi;
 
   let match;
   while ((match = pattern1.exec(content)) !== null) {
     const name = match[1];
     const parent = match[2];
-    const childNumbers = match[3].trim().split(/\s+/); // 複数の番号をスペースで分割
+    const childNumbers = match[3].trim().split(/\s+/); // Split multiple numbers by space
 
-    // 親OIDに全ての子番号を追加
+    // Append all child numbers to parent OID
     const oid = `${parent}.${childNumbers.join('.')}`;
 
     assignments.push({
       name,
-      oid, // 相対OID（後で解決）
+      oid, // Relative OID (resolved later)
     });
   }
 
-  // パターン2: identifier MODULE-IDENTITY ... ::= { parent child1 child2 ... }
-  // IMPORTSブロックを除外するため、より厳密なパターンを使用
+  // Pattern 2: identifier MODULE-IDENTITY ... ::= { parent child1 child2 ... }
+  // Use stricter pattern to exclude IMPORTS block
   const pattern2 = /^\s*(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
 
   while ((match = pattern2.exec(content)) !== null) {
     const name = match[1];
-    // IMPORTS は除外
+    // Exclude IMPORTS
     if (name === 'IMPORTS') continue;
 
     const parent = match[2];
-    const childNumbers = match[3].trim().split(/\s+/); // 複数の番号をスペースで分割
+    const childNumbers = match[3].trim().split(/\s+/); // Split multiple numbers by space
 
-    // DESCRIPTIONを抽出
+    // Extract DESCRIPTION
     const fullMatch = match[0];
     const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
 
-    // 親OIDに全ての子番号を追加
+    // Add all child numbers to parent OID
     const oid = `${parent}.${childNumbers.join('.')}`;
 
     assignments.push({
       name,
-      oid, // 相対OID（後で解決）
+      oid, // Relative OID (resolved later)
       description,
       type: 'MODULE-IDENTITY',
     });
   }
 
-  // パターン3: identifier OBJECT-IDENTITY ... ::= { parent child1 child2 ... }
+  // Pattern 3: identifier OBJECT-IDENTITY ... ::= { parent child1 child2 ... }
   const pattern3 = /^\s*(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\}/gim;
 
   while ((match = pattern3.exec(content)) !== null) {
@@ -344,7 +344,7 @@ function extractOidAssignments(
     const parent = match[2];
     const childNumbers = match[3].trim().split(/\s+/);
 
-    // DESCRIPTIONを抽出
+    // Extract DESCRIPTION
     const fullMatch = match[0];
     const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
@@ -359,23 +359,23 @@ function extractOidAssignments(
     });
   }
 
-  // 既知のルートOID（SMI標準定義 + IANA Enterprise Numbers）
-  // ベンダー固有の製品OIDはIMPORTS解析で動的に解決する
+  // Known root OIDs (SMI standard definitions + IANA Enterprise Numbers)
+  // Vendor-specific product OIDs are dynamically resolved via IMPORTS parsing
   const knownRoots: Array<{ name: string; oid: string }> = [
-    // ISO標準ルート
+    // ISO standard roots
     { name: 'iso', oid: '1' },
     { name: 'org', oid: '1.3' },
     { name: 'dod', oid: '1.3.6' },
     { name: 'internet', oid: '1.3.6.1' },
 
-    // Internet標準ブランチ
+    // Internet standard branches
     { name: 'directory', oid: '1.3.6.1.1' },
     { name: 'mgmt', oid: '1.3.6.1.2' },
     { name: 'experimental', oid: '1.3.6.1.3' },
     { name: 'private', oid: '1.3.6.1.4' },
     { name: 'enterprises', oid: '1.3.6.1.4.1' },
 
-    // MIB-2標準グループ（RFC 1213）
+    // MIB-2 standard groups (RFC 1213)
     { name: 'mib-2', oid: '1.3.6.1.2.1' },
     { name: 'system', oid: '1.3.6.1.2.1.1' },
     { name: 'interfaces', oid: '1.3.6.1.2.1.2' },
@@ -386,23 +386,23 @@ function extractOidAssignments(
     { name: 'udp', oid: '1.3.6.1.2.1.7' },
     { name: 'egp', oid: '1.3.6.1.2.1.8' },
     { name: 'snmp', oid: '1.3.6.1.2.1.11' },
- ];
+  ];
 
   const oidMap = new Map<string, string>();
 
-  // 外部OIDマップをマージ（他のMIBファイルで定義されたOID）
+  // Merge external OID map (OIDs defined in other MIB files)
   if (externalOidMap) {
     externalOidMap.forEach((oid, name) => {
       oidMap.set(name, oid);
     });
   }
 
-  // 既知のルートを追加
+  // Add known roots
   knownRoots.forEach(({ name, oid }) => {
     oidMap.set(name, oid);
   });
 
-  // 相対OIDを絶対OIDに解決
+  // Resolve relative OIDs to absolute OIDs
   const resolved: Array<{ name: string; oid: string; description?: string; type?: string }> = [];
   const unresolved: Array<{ name: string; oid: string; description?: string; type?: string }> = [];
   let changed = true;
@@ -417,24 +417,24 @@ function extractOidAssignments(
       if (!resolved.find(r => r.name === name) && !unresolved.find(u => u.name === name)) {
         const resolvedOid = resolveOid(oid, oidMap);
         if (resolvedOid && /^[\d.]+$/.test(resolvedOid)) {
-          // 絶対OIDに解決できた
+          // Successfully resolved to absolute OID
           oidMap.set(name, resolvedOid);
           resolved.push({ name, oid: resolvedOid, description, type });
           changed = true;
         } else if (iteration === maxIterations) {
-          // 最終イテレーションで解決できなかった相対OIDを保持
+          // Keep unresolved relative OIDs from final iteration
           unresolved.push({ name, oid, description, type });
         }
       }
     });
   }
 
-  // 解決できなかった相対OIDも追加（他のMIBファイルで解決される可能性がある）
+  // Add unresolved relative OIDs (may be resolved by other MIB files)
   unresolved.forEach(item => {
     resolved.push(item);
   });
 
-  // 既知のルートも追加
+  // Add known roots
   knownRoots.forEach(root => {
     if (!resolved.find(r => r.name === root.name)) {
       resolved.push(root);
@@ -445,7 +445,7 @@ function extractOidAssignments(
 }
 
 /**
- * OBJECT-TYPE定義を抽出
+ * Extract OBJECT-TYPE definitions
  */
 function extractObjectTypes(content: string): string[] {
   const objectTypes: string[] = [];
@@ -569,38 +569,38 @@ function extractTextualConventions(content: string): import('../types/mib').Text
 }
 
 /**
- * OBJECT-TYPE定義をパース
+ * Parse OBJECT-TYPE definition
  */
 function parseObjectType(content: string, oidMap: Map<string, string>): FlatMibNode | null {
-  // 名前を抽出
+  // Extract name
   const nameMatch = content.match(/^(\w+)\s+OBJECT-TYPE/);
   if (!nameMatch) return null;
   const name = nameMatch[1];
 
-  // SYNTAX を抽出
+  // Extract SYNTAX
   const syntaxMatch = content.match(/SYNTAX\s+([\w\-\s()]+?)(?=\s+(?:ACCESS|MAX-ACCESS|STATUS))/i);
   const syntax = syntaxMatch ? syntaxMatch[1].trim() : '';
 
-  // ACCESS を抽出
+  // Extract ACCESS
   const accessMatch = content.match(/(?:ACCESS|MAX-ACCESS)\s+([\w\-]+)/i);
   const access = accessMatch ? accessMatch[1].trim() : '';
 
-  // STATUS を抽出
+  // Extract STATUS
   const statusMatch = content.match(/STATUS\s+([\w\-]+)/i);
   const status = statusMatch ? statusMatch[1].trim() : '';
 
-  // DESCRIPTION を抽出（複数行対応）
+  // Extract DESCRIPTION (multiline support)
   const descMatch = content.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
   const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
 
-  // OID を抽出 ::= { parent child }
+  // Extract OID ::= { parent child }
   const oidMatch = content.match(/::=\s*\{\s*([\w\-]+)\s+(\d+)\s*\}/);
   if (!oidMatch) return null;
 
   const parentName = oidMatch[1];
   const childNum = oidMatch[2];
 
-  // 親のOIDを解決
+  // Resolve parent OID
   const parentOid = oidMap.get(parentName);
   if (!parentOid) {
     console.warn(`Parent OID not found for ${parentName}`);
@@ -622,15 +622,15 @@ function parseObjectType(content: string, oidMap: Map<string, string>): FlatMibN
 }
 
 /**
- * 相対OIDを絶対OIDに解決
+ * Resolve relative OID to absolute OID
  */
 function resolveOid(oid: string, oidMap: Map<string, string>): string {
-  // すでに数値のみの場合はそのまま返す
+  // Return as-is if already numeric only
   if (/^[\d.]+$/.test(oid)) {
     return oid;
   }
 
-  // "parent.child" 形式を解決
+  // Resolve "parent.child" format
   const parts = oid.split('.');
   const resolved: string[] = [];
 
@@ -642,7 +642,7 @@ function resolveOid(oid: string, oidMap: Map<string, string>): string {
       if (mappedOid) {
         resolved.push(mappedOid);
       } else {
-        return oid; // 解決できない
+        return oid; // Cannot resolve
       }
     }
   }
@@ -651,10 +651,10 @@ function resolveOid(oid: string, oidMap: Map<string, string>): string {
 }
 
 /**
- * ツリーを検索（名前またはOIDで）
- * @param tree MIBツリー
- * @param query 検索クエリ
- * @returns マッチしたノードの配列
+ * Search tree (by name or OID)
+ * @param tree MIB tree
+ * @param query Search query
+ * @returns Array of matching nodes
  */
 export function searchTree(tree: MibNode[], query: string): MibNode[] {
   const results: MibNode[] = [];
@@ -719,9 +719,9 @@ export function filterTreeByQuery(tree: MibNode[], query: string): MibNode[] {
 }
 
 /**
- * ツリーをフラット化
- * @param tree MIBツリー
- * @returns フラットなノード配列
+ * Flatten tree to array
+ * @param tree MIB tree
+ * @returns Flat array of nodes
  */
 export function flattenTree(tree: MibNode[]): MibNode[] {
   const result: MibNode[] = [];

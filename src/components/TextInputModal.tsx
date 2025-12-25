@@ -14,7 +14,7 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ESCキーで閉じる
+  // Close on ESC key
   useEffect(() => {
     if (!isOpen) return;
 
@@ -28,7 +28,7 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, isSubmitting, onClose]);
 
-  // モーダルが閉じたらリセット
+  // Reset when modal closes
   useEffect(() => {
     if (!isOpen) {
       setContent('');
@@ -47,7 +47,7 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
       return;
     }
 
-    // セキュリティ: ファイル名をサニタイズ
+    // Security: Sanitize file name
     const sanitizedFileName = sanitizeFileName(fileName.trim());
     if (sanitizedFileName === 'unnamed') {
       setError('Invalid file name');
@@ -73,14 +73,14 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
 
   if (!isOpen) return null;
 
-  // 背景クリックで閉じる
+  // Close on background click
   const handleBackgroundClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget && !isSubmitting) {
       onClose();
     }
   };
 
-  // モーダル内のクリックを親に伝播させない
+  // Prevent click propagation inside modal
   const handleModalClick = (e: React.MouseEvent) => {
     e.stopPropagation();
   };

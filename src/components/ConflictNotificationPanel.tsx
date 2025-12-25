@@ -23,7 +23,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
     keepFileName: string;
   } | null>(null);
 
-  // すべての競合ペアを抽出
+  // Extract all conflict pairs
   const conflictPairs = useMemo(() => {
     const pairs: ConflictPair[] = [];
     const processedPairs = new Set<string>();
@@ -31,7 +31,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
     mibs.forEach(mib => {
       if (!mib.conflicts || mib.conflicts.length === 0) return;
 
-      // この MIB が競合している各ファイルとのペアを作成
+      // Create pairs with each file this MIB conflicts with
       const conflictingFiles = new Set<string>();
       mib.conflicts.forEach(conflict => {
         conflictingFiles.add(conflict.existingFile);
@@ -41,21 +41,21 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
         const otherMib = mibs.find(m => m.fileName === fileName);
         if (!otherMib) return;
 
-        // ペアのユニークキーを作成（アルファベット順でソート）
+        // Create unique key for pair (sorted alphabetically)
         const pairKey = [mib.fileName, otherMib.fileName].sort().join('|');
         if (processedPairs.has(pairKey)) return;
 
         processedPairs.add(pairKey);
 
-        // この2つのファイル間の競合を抽出
+        // Extract conflicts between these two files
         const pairConflicts = mib.conflicts!.filter(
           c => c.existingFile === otherMib.fileName || c.newFile === otherMib.fileName
         );
 
         if (pairConflicts.length > 0) {
           pairs.push({
-            file1: otherMib,  // 既存のファイル (existingValue に対応)
-            file2: mib,       // 新しいファイル (newValue に対応)
+            file1: otherMib,  // Existing file (corresponds to existingValue)
+            file2: mib,       // New file (corresponds to newValue)
             conflicts: pairConflicts,
           });
         }
@@ -69,7 +69,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
 
   return (
     <>
-      {/* 通知バー */}
+      {/* Notification bar */}
       <div className="bg-yellow-50 border-b border-yellow-200 px-6 py-3">
         <div className="flex items-center gap-3">
           <AlertTriangle size={20} className="text-yellow-600 flex-shrink-0" />
@@ -96,11 +96,11 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
         </div>
       </div>
 
-      {/* 競合詳細ダイアログ */}
+      {/* Conflict details dialog */}
       {selectedConflict && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
-            {/* ヘッダー */}
+            {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
               <div className="flex items-center gap-2">
                 <AlertTriangle size={20} className="text-yellow-600" />
@@ -114,7 +114,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
               </button>
             </div>
 
-            {/* ファイル情報 */}
+            {/* File info */}
             <div className="p-4 bg-gray-50 border-b border-gray-200">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -134,7 +134,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
               </div>
             </div>
 
-            {/* 競合リスト */}
+            {/* Conflict list */}
             <div className="flex-1 overflow-y-auto p-4">
               <h3 className="text-sm font-semibold text-gray-700 mb-3">
                 Conflicting OIDs ({selectedConflict.conflicts.length})
@@ -173,7 +173,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
               </div>
             </div>
 
-            {/* アクションボタン */}
+            {/* Action buttons */}
             <div className="p-4 border-t border-gray-200 flex justify-between items-center bg-gray-50">
               <p className="text-sm text-gray-600">Choose which file to keep:</p>
               <div className="flex gap-3">

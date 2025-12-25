@@ -1,32 +1,32 @@
 /**
- * OID（Object Identifier）操作のユーティリティ関数
+ * Utility functions for OID (Object Identifier) operations
  */
 
 import type { MibNode } from '../types/mib';
 
 /**
- * OID文字列を数値配列に変換
- * @param oid OID文字列（例: "1.3.6.1.2.1.1"）
- * @returns 数値配列（例: [1, 3, 6, 1, 2, 1, 1]）
+ * Convert OID string to number array
+ * @param oid OID string (e.g., "1.3.6.1.2.1.1")
+ * @returns Number array (e.g., [1, 3, 6, 1, 2, 1, 1])
  */
 export function parseOid(oid: string): number[] {
   return oid.split('.').filter(Boolean).map(Number);
 }
 
 /**
- * 数値配列をOID文字列に変換
- * @param parts 数値配列
- * @returns OID文字列
+ * Convert number array to OID string
+ * @param parts Number array
+ * @returns OID string
  */
 export function formatOid(parts: number[]): string {
   return parts.join('.');
 }
 
 /**
- * OIDを比較（辞書順）
- * @param oid1 OID文字列1
- * @param oid2 OID文字列2
- * @returns 負の数（oid1 < oid2）、0（等しい）、正の数（oid1 > oid2）
+ * Compare OIDs (lexicographic order)
+ * @param oid1 OID string 1
+ * @param oid2 OID string 2
+ * @returns Negative (oid1 < oid2), 0 (equal), Positive (oid1 > oid2)
  */
 export function compareOids(oid1: string, oid2: string): number {
   const parts1 = parseOid(oid1);
@@ -44,19 +44,19 @@ export function compareOids(oid1: string, oid2: string): number {
 }
 
 /**
- * OID配列をソート
- * @param oids OID文字列の配列
- * @returns ソートされたOID配列
+ * Sort OID array
+ * @param oids Array of OID strings
+ * @returns Sorted OID array
  */
 export function sortOids(oids: string[]): string[] {
   return [...oids].sort(compareOids);
 }
 
 /**
- * oid2がoid1の子孫かどうかを判定
- * @param parentOid 親OID
- * @param childOid 子OID候補
- * @returns 子孫の場合true
+ * Check if oid2 is a descendant of oid1
+ * @param parentOid Parent OID
+ * @param childOid Child OID candidate
+ * @returns true if descendant
  */
 export function isDescendant(parentOid: string, childOid: string): boolean {
   if (parentOid === childOid) return false;
@@ -64,10 +64,10 @@ export function isDescendant(parentOid: string, childOid: string): boolean {
 }
 
 /**
- * oid2がoid1の直接の子かどうかを判定
- * @param parentOid 親OID
- * @param childOid 子OID候補
- * @returns 直接の子の場合true
+ * Check if oid2 is a direct child of oid1
+ * @param parentOid Parent OID
+ * @param childOid Child OID candidate
+ * @returns true if direct child
  */
 export function isDirectChild(parentOid: string, childOid: string): boolean {
   if (!isDescendant(parentOid, childOid)) return false;
@@ -79,9 +79,9 @@ export function isDirectChild(parentOid: string, childOid: string): boolean {
 }
 
 /**
- * OIDの親を取得
- * @param oid OID文字列
- * @returns 親OID、またはnull（ルートの場合）
+ * Get parent OID
+ * @param oid OID string
+ * @returns Parent OID, or null if root
  */
 export function getParentOid(oid: string): string | null {
   const parts = parseOid(oid);
@@ -91,18 +91,18 @@ export function getParentOid(oid: string): string | null {
 }
 
 /**
- * OIDの深さを取得
- * @param oid OID文字列
- * @returns 深さ（ルートは0）
+ * Get OID depth
+ * @param oid OID string
+ * @returns Depth (root is 0)
  */
 export function getOidDepth(oid: string): number {
   return parseOid(oid).length - 1;
 }
 
 /**
- * OIDのパスを取得（ルートから現在のOIDまで）
- * @param oid OID文字列
- * @returns OIDのパス配列
+ * Get OID path (from root to current OID)
+ * @param oid OID string
+ * @returns Array of OID path
  */
 export function getOidPath(oid: string): string[] {
   const parts = parseOid(oid);
@@ -116,9 +116,9 @@ export function getOidPath(oid: string): string[] {
 }
 
 /**
- * OIDが有効かどうかを検証
- * @param oid OID文字列
- * @returns 有効な場合true
+ * Validate if OID is valid
+ * @param oid OID string
+ * @returns true if valid
  */
 export function isValidOid(oid: string): boolean {
   if (!oid || typeof oid !== 'string') return false;
@@ -133,9 +133,9 @@ export function isValidOid(oid: string): boolean {
 }
 
 /**
- * OIDの最後の番号を取得
- * @param oid OID文字列
- * @returns 最後の番号
+ * Get last number of OID
+ * @param oid OID string
+ * @returns Last number
  */
 export function getLastOidNumber(oid: string): number {
   const parts = parseOid(oid);
@@ -143,10 +143,10 @@ export function getLastOidNumber(oid: string): number {
 }
 
 /**
- * 2つのOIDの共通の祖先OIDを取得
- * @param oid1 OID文字列1
- * @param oid2 OID文字列2
- * @returns 共通の祖先OID
+ * Get common ancestor OID of two OIDs
+ * @param oid1 OID string 1
+ * @param oid2 OID string 2
+ * @returns Common ancestor OID
  */
 export function getCommonAncestor(oid1: string, oid2: string): string | null {
   const parts1 = parseOid(oid1);
@@ -166,10 +166,10 @@ export function getCommonAncestor(oid1: string, oid2: string): string | null {
 }
 
 /**
- * OIDを人間が読みやすい形式にフォーマット
- * @param oid OID文字列
- * @param name オブジェクト名（オプション）
- * @returns フォーマットされた文字列
+ * Format OID for human-readable display
+ * @param oid OID string
+ * @param name Object name (optional)
+ * @returns Formatted string
  */
 export function formatOidDisplay(oid: string, name?: string): string {
   if (name) {

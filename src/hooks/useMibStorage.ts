@@ -1,5 +1,5 @@
 /**
- * MIBストレージ用カスタムフック (IndexedDB版)
+ * Custom hook for MIB storage (IndexedDB version)
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -36,43 +36,43 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
   });
   const [loading, setLoading] = useState(true);
 
-  // 初期読み込み
+  // Initial load
   useEffect(() => {
-    // URLパラメータで?reset=trueがある場合はデータをクリア
-    // セキュリティ: ホワイトリストで許可されたパラメータのみ処理（現在は'reset'のみ）
+    // Clear data if ?reset=true URL parameter exists
+    // Security: Only process whitelisted parameters (currently only 'reset')
     const urlParams = new URLSearchParams(window.location.search);
     const resetParam = urlParams.get('reset');
     if (resetParam === 'true') {
-      // URLからresetパラメータを削除
+      // Remove reset parameter from URL
       urlParams.delete('reset');
       const newUrl = urlParams.toString()
         ? `${window.location.pathname}?${urlParams.toString()}`
         : window.location.pathname;
       window.history.replaceState({}, '', newUrl);
 
-      // データをクリアしてからロード
+      // Clear data then load
       clearAllMibs().then(() => clearMergedTree()).then(() => loadData());
     } else {
       loadData();
     }
   }, []);
 
-  // データ読み込み
+  // Load data
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      // LocalStorageからの移行を試みる
+      // Attempt migration from LocalStorage
       await migrateFromLocalStorage();
 
-      // IndexedDBからMIBを読み込む
+      // Load MIBs from IndexedDB
       const loadedMibs = await getAllMibs();
       setMibs(loadedMibs);
 
-      // マージされたツリーを読み込む
+      // Load merged tree
       const tree = await loadMergedTree();
       setMergedTree(tree);
 
-      // ストレージ情報を取得
+      // Get storage info
       const info = await getStorageInfo();
       setStorageInfo(info);
     } catch (error) {
@@ -82,13 +82,13 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     }
   }, []);
 
-  // 全MIBを3パスアプローチで再構築
+  // Rebuild all MIBs using 3-pass approach
   const rebuildAllTrees = useCallback(async (): Promise<void> => {
     try {
-      // Step 1: 全MIBのcontentを取得
+      // Step 1: Get content of all MIBs
       const allMibs = await getAllMibs();
 
-      // Step 2: 全てをParsedModule形式に変換
+      // Step 2: Convert all to ParsedModule format
       const allModules = allMibs.map(mib => {
         try {
           return parseMibModule(mib.content, mib.fileName);
@@ -98,13 +98,13 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         }
       }).filter((m): m is NonNullable<typeof m> => m !== null);
 
-      // Step 3: MibTreeBuilderでツリー構築（エラー時はリトライ）
+      // Step 3: Build tree with MibTreeBuilder (retry on error)
       let tree;
       let modules = [...allModules];
       const errorFiles = new Set<string>();
       let lastMissingMibs: string[] = [];
 
-      // 最大リトライ回数（依存関係が解決できない場合の無限ループ防止）
+      // Max retry count (prevent infinite loop if dependencies cannot be resolved)
       const maxRetries = 10;
       let retryCount = 0;
 
@@ -112,22 +112,22 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         const builder = new MibTreeBuilder();
         try {
           tree = builder.buildTree(modules);
-          break; // 成功したらループを抜ける
+          break; // Exit loop on success
         } catch (buildError) {
-          // ツリー構築に失敗した場合、不足MIBを特定
+          // If tree build fails, identify missing MIBs
           const errorMessage = buildError instanceof Error ? buildError.message : 'Unknown error';
           const match = errorMessage.match(/Missing MIB dependencies: ([^.]+)/);
 
           if (match) {
             const missingMibs = match[1].split(',').map(s => s.trim());
 
-            // 同じ不足MIBでループしている場合は抜ける
+            // Exit if looping on same missing MIBs
             if (JSON.stringify(missingMibs.sort()) === JSON.stringify(lastMissingMibs.sort())) {
               break;
             }
             lastMissingMibs = missingMibs;
 
-            // 不足MIBに依存しているモジュールを特定して除外
+            // Identify and exclude modules depending on missing MIBs
             const modulesToRemove: string[] = [];
             for (const module of modules) {
               const dependsOnMissing = missingMibs.filter(missingMib =>
@@ -138,18 +138,18 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
                 modulesToRemove.push(module.fileName);
                 errorFiles.add(module.fileName);
 
-                // 該当MIBにエラー情報を保存
+                // Save error info to affected MIB
                 const mib = allMibs.find(m => m.fileName === module.fileName);
                 if (mib) {
                   mib.error = `Missing MIB dependencies: ${dependsOnMissing.join(', ')}`;
                   mib.missingDependencies = dependsOnMissing;
-                  mib.nodeCount = 0; // ノード数は0
+                  mib.nodeCount = 0; // Node count is 0
                   await saveMib(mib);
                 }
               }
             }
 
-            // エラーファイルを除外して再試行
+            // Exclude error files and retry
             if (modulesToRemove.length > 0) {
               modules = modules.filter(m => !modulesToRemove.includes(m.fileName));
               retryCount++;
@@ -157,25 +157,25 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
             }
           }
 
-          // 他のエラーまたは除外対象がない場合は抜ける
+          // Exit if other error or no files to exclude
           break;
         }
       }
 
-      // ツリー構築に完全に失敗した場合（モジュールが残っていない場合）
+      // If tree build completely failed (no modules remaining)
       if (!tree || modules.length === 0) {
-        // 全てのMIBにエラー情報を保存済み
+        // Error info already saved to all MIBs
         await clearMergedTree();
         return;
       }
 
-      // Step 4: ツリーをフラット化
+      // Step 4: Flatten tree
       const flatTree = flattenTree(tree);
 
-      // Step 5: マージされたツリーを1回だけ保存
+      // Step 5: Save merged tree once
       await saveMergedTree(tree);
 
-      // 各MIBのnodeCountを計算（そのMIBに属するノード数）
+      // Calculate nodeCount for each MIB (nodes belonging to that MIB)
       const nodeCountByFile = new Map<string, number>();
       for (const node of flatTree) {
         if (node.fileName) {
@@ -183,12 +183,12 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         }
       }
 
-      // Step 6: 同じモジュール名のMIBファイルを検出し、ノードレベルで差異を比較
-      // エラーファイルを除外
+      // Step 6: Detect MIB files with same module name and compare node-level differences
+      // Exclude error files
       const validMibs = allMibs.filter(mib => !errorFiles.has(mib.fileName));
       const parsedModuleMap = new Map(modules.map(m => [m.fileName, m]));
 
-      // モジュール名ごとにファイルをグループ化（エラーファイルを除外）
+      // Group files by module name (exclude error files)
       const mibNameMap = new Map<string, StoredMibData[]>();
       for (const mib of validMibs) {
         if (!mibNameMap.has(mib.mibName!)) {
@@ -197,40 +197,40 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         mibNameMap.get(mib.mibName!)!.push(mib);
       }
 
-      // 重複するモジュール名を持つファイル群を特定
+      // Identify files with duplicate module names
       const duplicateModules = Array.from(mibNameMap.entries())
         .filter(([_, mibs]) => mibs.length > 1);
 
-      // Step 7: 競合検出と保存（エラーファイルを除外）
+      // Step 7: Detect conflicts and save (exclude error files)
       for (const mib of validMibs) {
         const conflicts: MibConflict[] = [];
 
-        // 同じモジュール名を持つ他のファイルとノードレベルで比較
+        // Compare at node level with other files having same module name
         const duplicateGroup = duplicateModules.find(([name]) => name === mib.mibName);
         if (duplicateGroup) {
           const [moduleName, duplicates] = duplicateGroup;
           const otherDuplicates = duplicates.filter(m => m.id !== mib.id);
 
-          // このファイルのパース結果を取得
+          // Get parse result for this file
           const thisModule = parsedModuleMap.get(mib.fileName);
           if (thisModule) {
-            // 各重複ファイルとノードレベルで比較
+            // Compare at node level with each duplicate file
             for (const otherMib of otherDuplicates) {
               const otherModule = parsedModuleMap.get(otherMib.fileName);
               if (!otherModule) continue;
 
-              // オブジェクト名でマップを作成
+              // Create map by object name
               const thisObjects = new Map(thisModule.objects.map(o => [o.name, o]));
               const otherObjects = new Map(otherModule.objects.map(o => [o.name, o]));
 
-              // 両方に存在するオブジェクトを比較
+              // Compare objects that exist in both
               for (const [name, thisObj] of thisObjects) {
                 const otherObj = otherObjects.get(name);
                 if (!otherObj) continue;
 
                 const differences: { field: string; existingValue: string; newValue: string }[] = [];
 
-                // フィールドを比較
+                // Compare fields
                 const fieldsToCheck: (keyof typeof thisObj)[] = ['type', 'syntax', 'access', 'status', 'description'];
                 for (const field of fieldsToCheck) {
                   const thisValue = String(thisObj[field] || '');
@@ -268,7 +268,7 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         await saveMib(mib);
       }
 
-      // エラーファイルがあれば通知
+      // Notify if there are error files
       if (errorFiles.size > 0 && onNotification) {
         const errorDetails = allMibs
           .filter(mib => errorFiles.has(mib.fileName))
@@ -282,12 +282,12 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     }
   }, [onNotification]);
 
-  // MIBファイルをアップロード（3パスアプローチ使用）
+  // Upload MIB file (using 3-pass approach)
   const uploadMib = useCallback(async (file: File, _forceUpload = false, skipReload = false): Promise<UploadResult> => {
     try {
       const content = await file.text();
 
-      // MIBファイルとして有効かチェック
+      // Check if valid as MIB file
       const validation = validateMibContent(content);
       if (!validation.isValid) {
         return {
@@ -296,39 +296,39 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         };
       }
 
-      // parseMibModule()でパース（OID未解決）
+      // Parse with parseMibModule() (OID unresolved)
       const parsedModule = parseMibModule(content, file.name);
 
-      // 既存MIBを取得
+      // Get existing MIBs
       const existingMibs = await getAllMibs();
       const existingMib = existingMibs.find(mib => mib.fileName === file.name);
 
-      // 一時的にStoredMibDataとして保存（nodeCountは0）
-      // 後でrebuildAllTreesで更新される
+      // Temporarily save as StoredMibData (nodeCount is 0)
+      // Updated later by rebuildAllTrees
       const mibData: StoredMibData = {
-        id: existingMib ? existingMib.id : generateId(), // 既存があればそのIDを再利用
+        id: existingMib ? existingMib.id : generateId(), // Reuse ID if existing
         fileName: file.name,
         content,
-        nodeCount: 0, // rebuildAllTreesで更新
-        uploadedAt: existingMib ? existingMib.uploadedAt : Date.now(), // 既存があれば元のアップロード日時を保持
+        nodeCount: 0, // Updated by rebuildAllTrees
+        uploadedAt: existingMib ? existingMib.uploadedAt : Date.now(), // Keep original upload time if existing
         lastAccessedAt: Date.now(),
         size: file.size,
         mibName: parsedModule.moduleName,
-        conflicts: undefined, // rebuildAllTreesで更新
+        conflicts: undefined, // Updated by rebuildAllTrees
       };
 
       await saveMib(mibData);
 
-      // 全MIBを再構築（skipReloadがfalseの場合のみ）
+      // Rebuild all MIBs (only if skipReload is false)
       if (!skipReload) {
         try {
           await rebuildAllTrees();
           await loadData();
         } catch (error) {
-          // rebuildAllTreesでエラーが発生した場合（不足MIBなど）
-          // rebuildAllTreesが該当ファイルにエラー情報を保存済み
-          await loadData(); // リロード
-          throw error; // エラーを再スロー
+          // If error in rebuildAllTrees (e.g., missing MIBs)
+          // rebuildAllTrees already saved error info to affected files
+          await loadData(); // Reload
+          throw error; // Rethrow error
         }
       }
 
@@ -342,20 +342,20 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     }
   }, [loadData, rebuildAllTrees]);
 
-  // MIBを削除
+  // Delete a single MIB
   const removeMib = useCallback(async (id: string): Promise<void> => {
     try {
       await deleteMib(id);
-      // 残りのMIBでツリーを再構築
+      // Rebuild tree with remaining MIBs
       const remainingMibs = await getAllMibs();
       if (remainingMibs.length > 0) {
         try {
           await rebuildAllTrees();
         } catch {
-          // ツリー構築エラーは無視（不足MIBなど）
+          // Ignore tree build errors (e.g., missing MIBs)
         }
       } else {
-        // MIBが0になったらツリーもクリア
+        // Clear tree if no MIBs remain
         await clearMergedTree();
       }
       await loadData();
@@ -364,20 +364,20 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     }
   }, [loadData, rebuildAllTrees]);
 
-  // 複数のMIBを削除
+  // Delete multiple MIBs
   const removeMibs = useCallback(async (ids: string[]): Promise<void> => {
     try {
       await deleteMibs(ids);
-      // 残りのMIBでツリーを再構築
+      // Rebuild tree with remaining MIBs
       const remainingMibs = await getAllMibs();
       if (remainingMibs.length > 0) {
         try {
           await rebuildAllTrees();
         } catch {
-          // ツリー構築エラーは無視（不足MIBなど）
+          // Ignore tree build errors (e.g., missing MIBs)
         }
       } else {
-        // MIBが0になったらツリーもクリア
+        // Clear tree if no MIBs remain
         await clearMergedTree();
       }
       await loadData();
@@ -386,29 +386,29 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     }
   }, [loadData, rebuildAllTrees]);
 
-  // MIBを取得
+  // Get MIB by ID
   const getMibById = useCallback(async (id: string): Promise<StoredMibData | null> => {
     return await getMib(id);
   }, []);
 
-  // エクスポート
+  // Export all MIBs as JSON
   const exportData = useCallback(async (): Promise<string> => {
     const allMibs = await getAllMibs();
     return JSON.stringify(allMibs, null, 2);
   }, []);
 
-  // インポート
+  // Import MIBs from JSON
   const importData = useCallback(async (json: string): Promise<boolean> => {
     try {
       const parsed = JSON.parse(json);
 
-      // セキュリティ: JSONデータの構造を検証
+      // Security: Validate JSON data structure
       if (!Array.isArray(parsed)) {
         console.error('Invalid import data: expected an array');
         return false;
       }
 
-      // 各MIBの構造を検証
+      // Validate each MIB structure
       const validMibs: StoredMibData[] = [];
       for (const item of parsed) {
         if (isValidStoredMibData(item)) {
@@ -434,10 +434,10 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     }
   }, [loadData]);
 
-  // テキストからMIBをアップロード
+  // Upload MIB from text content
   const uploadMibFromText = useCallback(async (content: string, fileName: string, skipReload = false): Promise<UploadResult> => {
     try {
-      // MIBファイルとして有効かチェック
+      // Check if valid as MIB file
       const validation = validateMibContent(content);
       if (!validation.isValid) {
         return {
@@ -446,19 +446,19 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         };
       }
 
-      // parseMibModule()でパース（OID未解決）
+      // Parse with parseMibModule() (OID unresolved)
       const parsedModule = parseMibModule(content, fileName);
 
-      // 既存MIBを取得
+      // Get existing MIBs
       const existingMibs = await getAllMibs();
       const existingMib = existingMibs.find(mib => mib.fileName === fileName);
 
-      // 一時的にStoredMibDataとして保存（nodeCountは0）
+      // Temporarily save as StoredMibData (nodeCount is 0)
       const mibData: StoredMibData = {
         id: existingMib ? existingMib.id : generateId(),
         fileName,
         content,
-        nodeCount: 0, // rebuildAllTreesで更新
+        nodeCount: 0, // Updated by rebuildAllTrees
         uploadedAt: existingMib ? existingMib.uploadedAt : Date.now(),
         lastAccessedAt: Date.now(),
         size: new Blob([content]).size,
@@ -468,13 +468,13 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
 
       await saveMib(mibData);
 
-      // 全MIBを再構築
+      // Rebuild all MIBs
       if (!skipReload) {
         try {
           await rebuildAllTrees();
           await loadData();
         } catch (error) {
-          // rebuildAllTreesが該当ファイルにエラー情報を保存済み
+          // rebuildAllTrees already saved error info to affected files
           await loadData();
           throw error;
         }
@@ -490,7 +490,7 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     }
   }, [loadData, rebuildAllTrees]);
 
-  // すべてクリア
+  // Clear all MIBs and tree
   const clearAll = useCallback(async (): Promise<void> => {
     try {
       await clearAllMibs();
@@ -500,6 +500,18 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       console.error('Failed to clear all MIBs:', error);
     }
   }, [loadData]);
+
+  // Rebuild tree from all MIBs
+  const rebuildTree = useCallback(async (): Promise<void> => {
+    try {
+      await rebuildAllTrees();
+      await loadData();
+    } catch (error) {
+      console.error('Failed to rebuild tree:', error);
+      await loadData(); // Reload to show any error states
+      throw error;
+    }
+  }, [rebuildAllTrees, loadData]);
 
   return {
     mibs,
@@ -514,6 +526,7 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     exportData,
     importData,
     clearAll,
+    rebuildTree,
     reload: loadData,
   };
 }

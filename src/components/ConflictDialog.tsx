@@ -15,7 +15,7 @@ export default function ConflictDialog({
   onCancel,
   onForceUpload,
 }: ConflictDialogProps) {
-  // ESCキーで閉じる
+  // Close on ESC key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -27,7 +27,7 @@ export default function ConflictDialog({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onCancel]);
 
-  // 背景クリックで閉じる
+  // Close on background click
   const handleBackgroundClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       onCancel();

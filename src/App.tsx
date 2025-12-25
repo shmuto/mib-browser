@@ -40,6 +40,7 @@ export default function App() {
     removeMib,
     removeMibs,
     clearAll,
+    rebuildTree,
     reload,
   } = useMibStorage({ onNotification: addNotification });
 
@@ -107,7 +108,7 @@ export default function App() {
       const url = URL.createObjectURL(blob);
 
       // Create a temporary link and trigger download
-      // セキュリティ: ファイル名をサニタイズしてパストラバーサル攻撃を防止
+      // Security: Sanitize filename to prevent path traversal attacks
       const link = document.createElement('a');
       link.href = url;
       link.download = sanitizeFileName(mib.fileName);
@@ -249,6 +250,7 @@ export default function App() {
               <StorageManager
                 storageInfo={storageInfo}
                 onClearAll={clearAll}
+                onRebuildTree={rebuildTree}
               />
             </aside>
           }
