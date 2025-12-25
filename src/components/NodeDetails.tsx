@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Copy, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
-import type { MibNode, StoredMibData } from '../types/mib';
+import type { MibNode, StoredMibData, TextualConvention } from '../types/mib';
 import OidBreadcrumb from './OidBreadcrumb';
+import { parseMibModule } from '../lib/mib-parser';
 
 interface NodeDetailsProps {
   node: MibNode | null;
@@ -14,6 +15,30 @@ interface NodeDetailsProps {
 
 export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree }: NodeDetailsProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // Parse TEXTUAL-CONVENTIONs from all loaded MIBs and find matching TC for this node's syntax
+  // Must be called before any conditional returns (React hooks rule)
+  const matchingTC = useMemo((): TextualConvention | null => {
+    if (!node?.syntax) return null;
+
+    // Extract the type name from syntax (e.g., "DisplayString" from "DisplayString (SIZE (0..255))")
+    const syntaxTypeName = node.syntax.split(/\s*\(/)[0].trim();
+
+    // Search all MIBs for matching TC
+    for (const mib of mibs) {
+      if (!mib.content) continue;
+      try {
+        const parsed = parseMibModule(mib.content, mib.fileName);
+        if (parsed.textualConventions) {
+          const tc = parsed.textualConventions.find(tc => tc.name === syntaxTypeName);
+          if (tc) return tc;
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    }
+    return null;
+  }, [node?.syntax, mibs]);
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
@@ -127,6 +152,26 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree 
         <DetailRow label="Type" value={node.type} />
 
         {node.syntax && <DetailRow label="Syntax" value={node.syntax} />}
+
+        {/* TEXTUAL-CONVENTION enum values */}
+        {matchingTC?.enumValues && matchingTC.enumValues.length > 0 && (
+          <div>
+            <dt className="text-sm font-medium text-gray-600 mb-1">
+              Values <span className="text-xs text-gray-400">({matchingTC.name})</span>
+            </dt>
+            <dd className="text-sm text-gray-800 bg-purple-50 p-3 rounded border border-purple-200">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
+                {matchingTC.enumValues.map(ev => (
+                  <div key={ev.value} className="flex justify-between">
+                    <span className="text-purple-700">{ev.name}</span>
+                    <span className="text-gray-500">({ev.value})</span>
+                  </div>
+                ))}
+              </div>
+            </dd>
+          </div>
+        )}
+
         {node.access && <DetailRow label="Access" value={node.access} />}
         {node.status && <DetailRow label="Status" value={node.status} />}
 

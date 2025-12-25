@@ -498,6 +498,77 @@ function extractObjectTypes(content: string): string[] {
 }
 
 /**
+ * Extract TEXTUAL-CONVENTION definitions from MIB content
+ */
+function extractTextualConventions(content: string): import('../types/mib').TextualConvention[] {
+  const conventions: import('../types/mib').TextualConvention[] = [];
+
+  // Pattern: name ::= TEXTUAL-CONVENTION ... SYNTAX ...
+  const pattern = /(\w+)\s*::=\s*TEXTUAL-CONVENTION([\s\S]*?)(?=\n\s*\w+\s*(?:::=|OBJECT-TYPE|OBJECT-IDENTITY|MODULE-IDENTITY|NOTIFICATION-TYPE)|$)/gi;
+
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    const name = match[1];
+    const body = match[2];
+
+    // Extract STATUS
+    const statusMatch = body.match(/STATUS\s+([\w-]+)/i);
+    const status = statusMatch ? statusMatch[1].trim() : undefined;
+
+    // Extract DISPLAY-HINT
+    const displayHintMatch = body.match(/DISPLAY-HINT\s+"([^"]+)"/i);
+    const displayHint = displayHintMatch ? displayHintMatch[1] : undefined;
+
+    // Extract DESCRIPTION
+    const descMatch = body.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
+    const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : undefined;
+
+    // Extract SYNTAX with possible enum values or ranges
+    const syntaxMatch = body.match(/SYNTAX\s+([\s\S]*?)(?=STATUS|DESCRIPTION|DISPLAY-HINT|$)/i);
+    if (!syntaxMatch) continue;
+
+    let syntaxRaw = syntaxMatch[1].trim();
+    let syntax = syntaxRaw;
+    let enumValues: Array<{ name: string; value: number }> | undefined;
+    let ranges: Array<{ min: number; max: number }> | undefined;
+
+    // Check for enum values: INTEGER { name(value), ... }
+    const enumMatch = syntaxRaw.match(/(\w+(?:\s+\w+)*)\s*\{([^}]+)\}/);
+    if (enumMatch) {
+      syntax = enumMatch[1].trim();
+      const enumBody = enumMatch[2];
+      enumValues = [];
+      const enumPattern = /(\w+)\s*\(\s*(-?\d+)\s*\)/g;
+      let enumItem;
+      while ((enumItem = enumPattern.exec(enumBody)) !== null) {
+        enumValues.push({ name: enumItem[1], value: parseInt(enumItem[2], 10) });
+      }
+      if (enumValues.length === 0) enumValues = undefined;
+    }
+
+    // Check for size/range constraints: (SIZE (min..max)) or (min..max)
+    const rangeMatch = syntaxRaw.match(/\(\s*(?:SIZE\s*\()?\s*(\d+)\s*\.\.\s*(\d+)\s*\)?\s*\)/i);
+    if (rangeMatch) {
+      ranges = [{ min: parseInt(rangeMatch[1], 10), max: parseInt(rangeMatch[2], 10) }];
+      // Clean up syntax
+      syntax = syntax.replace(/\s*\(.*\)\s*$/, '').trim();
+    }
+
+    conventions.push({
+      name,
+      status,
+      description,
+      displayHint,
+      syntax,
+      enumValues,
+      ranges,
+    });
+  }
+
+  return conventions;
+}
+
+/**
  * OBJECT-TYPE定義をパース
  */
 function parseObjectType(content: string, oidMap: Map<string, string>): FlatMibNode | null {
@@ -725,11 +796,15 @@ export function parseMibModule(content: string, fileName?: string): import('../t
     }
   });
 
+  // Extract TEXTUAL-CONVENTIONs
+  const textualConventions = extractTextualConventions(cleanedWithoutImports);
+
   return {
     moduleName: mibName,
     fileName: fileName || '',
     imports: importsMap,
     objects,
+    textualConventions: textualConventions.length > 0 ? textualConventions : undefined,
   };
 }
 

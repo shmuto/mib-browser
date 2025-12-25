@@ -94,12 +94,24 @@ export interface UploadResult {
 
 // === 3-pass approach type definitions ===
 
+// TEXTUAL-CONVENTION definition
+export interface TextualConvention {
+  name: string;
+  status?: string;
+  description?: string;
+  displayHint?: string;
+  syntax: string;                           // e.g., "INTEGER", "OCTET STRING"
+  enumValues?: Array<{ name: string; value: number }>; // For enumerated types
+  ranges?: Array<{ min: number; max: number }>;        // For size/range constraints
+}
+
 // Parsed module (intermediate representation after parsing, before OID resolution)
 export interface ParsedModule {
   moduleName: string;
   fileName: string;             // Source file name
   imports: Map<string, string>; // { "SymbolName": "SourceModuleName" }
   objects: RawMibObject[];
+  textualConventions?: TextualConvention[];
 }
 
 // Raw MIB object (parsed but OIDs not yet resolved)
