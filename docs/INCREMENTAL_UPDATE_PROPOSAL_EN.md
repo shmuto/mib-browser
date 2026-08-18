@@ -1,5 +1,10 @@
 # Incremental MIB Tree Update Proposal
 
+**Status: proposal, not implemented.** The application still performs a full
+rebuild on every change. See [PERFORMANCE_EN.md](./PERFORMANCE_EN.md) for what
+that currently costs and [MIB_TREE_CONSTRUCTION_EN.md](./MIB_TREE_CONSTRUCTION_EN.md)
+for how the rebuild works today.
+
 ## Current Problem
 
 The current implementation **rebuilds the entire tree** when adding or deleting even a single MIB file:
@@ -17,12 +22,26 @@ await uploadMib(file) {
 
 ### Performance Issues
 
-| MIB Count | Rebuild Time (Estimated) | Issue |
-|-----------|--------------------------|-------|
-| 10 files | ~100ms | Acceptable |
-| 50 files | ~500ms | Somewhat slow |
-| 100 files | ~1-2s | User experience degraded |
-| 500 files | ~5-10s | Impractical |
+The rebuild has since been optimized (see
+[PERFORMANCE_EN.md](./PERFORMANCE_EN.md)), so the constant factor is roughly a
+third of what it was — but the shape of the problem is unchanged: the cost is
+proportional to the **whole collection**, not to what changed.
+
+Measured on a synthetic corpus, Chromium, end to end from dropping the files in
+to the tree being rendered:
+
+| MIB count | Total size | Rebuild |
+|---|---|---|
+| 12 files | ~0.4 MB | ~180 ms |
+| 60 files | ~2 MB | ~625 ms |
+
+At library level (parse + build only, no storage), 400 modules / 14 MB / 63k
+nodes takes roughly 700 ms — ~480 ms parsing, ~220 ms building. Parsing
+dominates, and it is exactly the work an incremental update would skip: a file
+that has not changed does not need re-parsing.
+
+Note also that this runs on the main thread, so however long it takes is time
+the UI is frozen.
 
 ---
 
@@ -468,7 +487,10 @@ const rebuildAllTrees = useCallback(async (): Promise<void> => {
 
 ### Current State
 - ❌ Full tree rebuild for adding one MIB
-- ❌ Slow with large MIB sets
+- ❌ Cost scales with the whole collection, not with the change
+- ❌ Runs on the main thread, so the UI is blocked for the duration
+- ✅ The rebuild itself has been optimized as far as it usefully can be without
+  changing this design
 
 ### Proposal
 1. **Short-term**: Cache optimization for 30-70% speedup (simple implementation)

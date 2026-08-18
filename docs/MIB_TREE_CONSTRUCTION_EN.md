@@ -1,5 +1,9 @@
 # MIB Tree Construction Logic - Detailed Documentation
 
+How MIB text becomes a merged OID tree. For the surrounding application — UI,
+state, persistence — see [ARCHITECTURE_EN.md](./ARCHITECTURE_EN.md); for the
+cost of each stage see [PERFORMANCE_EN.md](./PERFORMANCE_EN.md).
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -33,42 +37,66 @@ The MIB tree construction system is a robust solution for parsing multiple MIB m
 
 ### Data Structures
 
+The authoritative definitions are in `src/types/mib.ts`.
+
 #### ParsedModule
 ```typescript
 interface ParsedModule {
-  moduleName: string;        // Module name
-  fileName?: string;         // File name
-  imports: ImportInfo[];     // IMPORTS clause information
-  objects: ParsedObject[];   // OID assignments and OBJECT-TYPE definitions
-  textualConventions: TextualConvention[];  // TEXTUAL-CONVENTION definitions
+  moduleName: string;              // Module name
+  fileName: string;                // Source file name
+  imports: Map<string, string>;    // { "SymbolName": "SourceModuleName" }
+  objects: RawMibObject[];         // OID assignments and OBJECT-TYPE definitions
+  textualConventions?: TextualConvention[];
 }
 ```
 
-#### TreeBuildNode
+#### RawMibObject
+Parsed but not yet resolved: the parent is still a *name*, and the position
+under it is a sub-identifier.
+
 ```typescript
-interface TreeBuildNode extends MibNode {
-  parentName: string | null;      // Unresolved parent name (e.g., "system")
-  subid: number | number[];       // Relative ID from parent
-  parent: TreeBuildNode | null;   // Resolved parent node reference
-  children: TreeBuildNode[];      // Child node array
+interface RawMibObject {
+  name: string;
+  parentName: string;           // Unresolved parent name (e.g., "system")
+  subid: number | number[];     // One subid, or several for { parent 3011 7124 3282 }
+  type: string;                 // "OBJECT-TYPE" | "OBJECT IDENTIFIER" | ...
+  description?: string;
+  syntax?: string;
+  access?: string;
+  status?: string;
+  fileName?: string;
 }
 ```
 
-#### MibNode (Final Output)
+#### MibNode (final output)
 ```typescript
 interface MibNode {
-  name: string;           // Node name (e.g., "sysDescr")
   oid: string;            // Absolute OID (e.g., "1.3.6.1.2.1.1.1")
-  parent: string | null;  // Parent's OID
-  children: MibNode[];    // Child node array
+  name: string;           // Node name (e.g., "sysDescr")
+  parent: string | null;  // Parent's OID, not a node reference
   type: string;           // OBJECT-TYPE type
   syntax: string;         // SYNTAX
   access: string;         // ACCESS/MAX-ACCESS
   status: string;         // STATUS
   description: string;    // DESCRIPTION
-  moduleName: string;     // Module name
-  mibName: string;        // MIB name
+  children: MibNode[];    // Child node array
+  isExpanded?: boolean;
+  mibName?: string;       // Module the node came from
   fileName?: string;      // Source file name
+}
+```
+
+#### TreeBuildNode
+The builder's working node: a `MibNode` plus the fields needed to resolve it.
+Note that `parent` is inherited from `MibNode` and holds the parent's **OID
+string**, filled in during Pass 3 — the parent-child relationship itself lives
+in the `children` arrays.
+
+```typescript
+interface TreeBuildNode extends MibNode {
+  parentName?: string | null;   // Unresolved parent name
+  subid?: number | number[];    // Position under the parent
+  moduleName: string;           // Source module name
 }
 ```
 
@@ -80,6 +108,8 @@ The tree building process uses three main maps:
    - Key: `"ModuleName::ObjectName"` (e.g., `"SNMPv2-MIB::system"`)
    - Value: Node object
    - Purpose: Unique reference resolution within modules
+   - Seed nodes are registered under the module name `SNMPv2-SMI`
+     (`"SNMPv2-SMI::iso"`, …)
 
 2. **nameMap**: `Map<string, TreeBuildNode[]>`
    - Key: `"ObjectName"` (e.g., `"system"`)
@@ -91,12 +121,21 @@ The tree building process uses three main maps:
    - Value: `{ ImportedSymbolName → SourceModuleName }`
    - Purpose: Reference resolution based on IMPORTS clause
 
+Two lookup indexes support them:
+
+4. **seedMap**: `Map<string, TreeBuildNode>` — seed nodes by name.
+5. **childIndex**: `Map<TreeBuildNode, Map<string, TreeBuildNode>>` — for each
+   parent, its children keyed by `"name|subid"`. This is what makes duplicate
+   detection a map lookup instead of a scan of the children array; without it,
+   linking under a parent with many children (`enterprises` with hundreds of
+   vendor MIBs) is quadratic.
+
 ---
 
 ## 3-Pass Approach
 
 ### Pass 1: Symbol Registration
-**Function**: `pass1_registerSymbols()` (`mib-tree-builder.ts:87-151`)
+**Function**: `pass1_registerSymbols()` (`src/lib/mib-tree-builder.ts`)
 
 #### Purpose
 Extract symbols from all MIB modules and register them in maps. Parent-child relationships are not established at this stage.
@@ -172,7 +211,7 @@ Extract symbols from all MIB modules and register them in maps. Parent-child rel
 ---
 
 ### Pass 2: Parent Linking
-**Function**: `pass2_linkParents()` (`mib-tree-builder.ts:154-196`)
+**Function**: `pass2_linkParents()` (`src/lib/mib-tree-builder.ts`)
 
 #### Purpose
 Connect each node to its parent node to form a tree structure.
@@ -203,9 +242,9 @@ function resolveParent(node: TreeBuildNode, moduleName: string): TreeBuildNode |
   }
 
   // 3. Search seed nodes
-  const seedKey = `SEED::${parentName}`;
-  if (symbolMap.has(seedKey)) {
-    return symbolMap.get(seedKey)!;
+  const seed = seedMap.get(parentName);
+  if (seed) {
+    return seed;
   }
 
   // 4. Fallback: Cross-module search (only if name is unique)
@@ -220,33 +259,44 @@ function resolveParent(node: TreeBuildNode, moduleName: string): TreeBuildNode |
 
 #### Duplicate Detection and Merging
 
-If a child with the same name and subid already exists under the same parent, it's considered a duplicate:
+Two MIB files can define the same node — the same name at the same position
+under the same parent. Linking goes through `attachChild()`, which identifies a
+child by `"name|subid"` and consults the parent's `childIndex`:
 
 ```typescript
-function subidsEqual(a: number | number[], b: number | number[]): boolean {
-  if (typeof a === 'number' && typeof b === 'number') {
-    return a === b;
-  }
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((v, i) => v === b[i]);
-  }
-  return false;
-}
+function attachChild(parent: TreeBuildNode, node: TreeBuildNode): void {
+  const index = getChildIndex(parent);       // built lazily, then kept in sync
+  const key = childKey(node);                // `${name}|${subid}`
+  const existing = index.get(key);
 
-// Check for existing child
-const existingChild = parent.children.find(c =>
-  c.name === child.name && subidsEqual(c.subid, child.subid)
-);
+  if (!existing) {
+    // New child - link it (its OID is computed in Pass 3)
+    parent.children.push(node);
+    index.set(key, node);
+    return;
+  }
 
-if (existingChild) {
-  // Duplicate - merge children of existing node
-  existingChild.children.push(...child.children);
-  // Discard duplicate node
-} else {
-  // New - add to children array
-  parent.children.push(child);
+  if (existing === node) return;             // already linked
+
+  // Duplicate definition - fold this node's children into the existing one,
+  // skipping grandchildren the existing node already has
+  const existingIndex = getChildIndex(existing);
+  for (const grandChild of node.children) {
+    const grandChildKey = childKey(grandChild);
+    if (!existingIndex.has(grandChildKey)) {
+      existing.children.push(grandChild);
+      existingIndex.set(grandChildKey, grandChild);
+    }
+  }
 }
 ```
+
+The duplicate node itself is dropped from the tree; whichever definition was
+linked first wins. The **files** are still compared afterwards and reported as
+conflicts — see [Conflict Detection](#conflict-detection).
+
+`childKey()` distinguishes an array subid from a numeric one (`a3011.7124` vs
+`n12`) so that `[1, 2]` and `12` cannot collide.
 
 #### Orphan Node Processing
 
@@ -261,7 +311,7 @@ if (!parent) {
 ---
 
 ### Pass 2.5: Orphan Rescue
-**Function**: `pass2_5_rescueOrphans()` (`mib-tree-builder.ts:249-295`)
+**Function**: `pass2_5_rescueOrphans()` (`src/lib/mib-tree-builder.ts`)
 
 #### Purpose
 Retry orphan nodes to link them to parents when dependencies are loaded out of order.
@@ -271,50 +321,40 @@ Retry orphan nodes to link them to parents when dependencies are loaded out of o
 ```typescript
 function pass2_5_rescueOrphans(): void {
   const maxRetries = 3;
+  let retry = 0;
 
-  for (let retry = 0; retry < maxRetries; retry++) {
-    const stillOrphans: TreeBuildNode[] = [];
-    const previousOrphanCount = orphanNodes.length;
+  while (orphanNodes.length > 0 && retry < maxRetries) {
+    const currentOrphans = [...orphanNodes];
+    orphanNodes = [];
 
-    for (const orphan of orphanNodes) {
-      const parent = resolveParent(orphan, orphan.moduleName);
+    for (const node of currentOrphans) {
+      const parent = resolveParent(node);
 
       if (parent) {
-        // Parent found - link
-        orphan.parent = parent;
-        // Check for duplicates and add
-        const existing = parent.children.find(c =>
-          c.name === orphan.name && subidsEqual(c.subid, orphan.subid)
-        );
-        if (!existing) {
-          parent.children.push(orphan);
-        }
+        attachChild(parent, node);   // same linking/merging path as Pass 2
       } else {
-        // Still orphan
-        stillOrphans.push(orphan);
+        orphanNodes.push(node);      // still orphan, try again next round
       }
     }
 
-    orphanNodes = stillOrphans;
-
-    // Exit if no progress
-    if (orphanNodes.length === previousOrphanCount) {
-      break;
-    }
+    retry++;
   }
 }
 ```
 
 #### Retry Strategy
 
-- Maximum 3 retries
-- Exit early if orphan count doesn't decrease each retry
-- Prevents infinite loops
+- At most 3 rounds, and it stops as soon as no orphans are left
+- Each round can only help if the previous one linked something, because a
+  rescued node may itself be the parent another orphan was waiting for — a
+  chain of *n* out-of-order definitions needs *n* rounds
+- Whatever is still orphaned after the last round is reported as a missing
+  dependency (see [Orphan Node Detection](#orphan-node-detection))
 
 ---
 
 ### Pass 3: OID Computation
-**Function**: `pass3_computeOids()` (`mib-tree-builder.ts:298-340`)
+**Function**: `pass3_computeOids()` (`src/lib/mib-tree-builder.ts`)
 
 #### Purpose
 Compute each node's absolute OID from its parent's OID and its own subid.
@@ -322,44 +362,49 @@ Compute each node's absolute OID from its parent's OID and its own subid.
 #### Computation Algorithm
 
 ```typescript
-function computeOidRecursive(node: TreeBuildNode, visited: Set<TreeBuildNode>): void {
+function computeOidRecursive(node: TreeBuildNode, visited: Set<string>): void {
+  const key = `${node.moduleName}::${node.name}`;
+
   // Detect circular references
-  if (visited.has(node)) {
-    console.error(`Circular reference detected at node: ${node.name}`);
+  if (visited.has(key)) {
+    console.error(`[Cycle Detected] ${key}`);
     return;
   }
-  visited.add(node);
+  visited.add(key);
 
-  // For each child
   for (const child of node.children) {
-    if (!child.parent) {
-      child.parent = node;
+    // Compute the child's OID from the parent's OID and the child's subid
+    if (node.oid && child.subid !== undefined) {
+      child.oid = Array.isArray(child.subid)
+        ? `${node.oid}.${child.subid.join('.')}`   // { aristaProducts 3011 7124 3282 }
+        : `${node.oid}.${child.subid}`;
+      child.parent = node.oid;                     // parent is stored as an OID
     }
 
-    // Compute OID
-    if (typeof child.subid === 'number') {
-      // Single subid
-      child.oid = `${node.oid}.${child.subid}`;
-    } else if (Array.isArray(child.subid)) {
-      // Multiple subids (e.g., [3011, 7124, 3282])
-      const subidStr = child.subid.join('.');
-      child.oid = `${node.oid}.${subidStr}`;
-    }
-
-    // Set parent OID
-    child.parent = node.oid;
-
-    // Recursively process children
     computeOidRecursive(child, visited);
   }
+
+  // Remove on the way back up: `visited` tracks the current root-to-node path
+  visited.delete(key);
 }
 
-// Start from each seed node
+// Start only from seeds that are not themselves under another seed.
+// The seeds form a chain (iso -> org -> dod -> internet -> ...), so starting
+// from every one of them would recompute the same subtrees repeatedly.
 for (const seed of seedNodes) {
-  const visited = new Set<TreeBuildNode>();
-  computeOidRecursive(seed, visited);
+  if (seed.parentName) continue;
+  computeOidRecursive(seed, new Set());
 }
 ```
+
+Two details that are easy to get wrong here:
+
+- **`visited` holds the current path, not every node seen.** Entries are removed
+  as the recursion unwinds, so one set can be reused for the whole traversal.
+  Keeping entries after the fact would flag a legitimately shared node as a
+  cycle; copying the set for each child would allocate O(nodes x depth) sets.
+- **The traversal starts at `iso` only.** Everything reachable from a seed is
+  reachable from `iso`, because `buildSeedHierarchy()` links the seeds together.
 
 #### Multiple SubID Handling
 
@@ -611,17 +656,15 @@ async function rebuildAllTrees(): Promise<void> {
   // 7. Detect conflicts in duplicate module names
   const conflicts = detectConflicts(allMibs, flatTree);
 
-  // 8. Save metadata to each MIB (nodeCount, conflicts, errors)
-  for (const mib of allMibs) {
-    await saveMib({
-      ...mib,
-      nodeCount: nodeCounts.get(mib.fileName) || 0,
-      conflicts: conflicts.get(mib.fileName) || [],
-      error: excludedModules.has(mib.moduleName) ? '...' : undefined
-    });
-  }
+  // 8. Save metadata for every MIB (nodeCount, conflicts, errors) in ONE
+  //    transaction. One saveMib() per file means one transaction per file.
+  await saveMibs(changedMibs);
 }
 ```
+
+The records are mutated in place as the rebuild goes along, collected in a
+`dirtyMibs` set, and written once at the end — including on the early-return
+path where the build failed completely, so error state is never lost.
 
 ### Conflict Detection
 
@@ -919,46 +962,59 @@ function detectConflicts(mibs: Mib[], flatTree: MibNode[]): Map<string, Conflict
 
 ## Critical Functions Summary
 
-| Function | Responsibility | Lines |
-|----------|----------------|-------|
-| `MibTreeBuilder.buildTree()` | Orchestrate 3-pass process | 39-63 |
-| `pass1_registerSymbols()` | Register all symbols | 87-151 |
-| `pass2_linkParents()` | Link nodes to parents | 154-196 |
-| `pass3_computeOids()` | Calculate absolute OIDs | 298-340 |
-| `resolveParent()` | Find parent with fallbacks | 213-247 |
-| `parseMibModule()` | Parse MIB to ParsedModule | 751-809 |
-| `computeOidRecursive()` | Recursive OID calculation | 305-340 |
-| `rebuildAllTrees()` | Complete rebuild with errors | 86-283 |
-| `detectMissingMibs()` | Identify missing MIB dependencies | 438-463 |
-| `registerSeedNodes()` | Create standard SNMP hierarchy | 343-398 |
+| Function | File | Responsibility |
+|---|---|---|
+| `MibTreeBuilder.buildTree()` | `mib-tree-builder.ts` | Orchestrate the 3-pass process |
+| `pass1_registerSymbols()` | `mib-tree-builder.ts` | Register all symbols |
+| `pass2_linkParents()` | `mib-tree-builder.ts` | Link nodes to parents |
+| `pass2_5_rescueOrphans()` | `mib-tree-builder.ts` | Retry unresolved parents |
+| `pass3_computeOids()` | `mib-tree-builder.ts` | Calculate absolute OIDs |
+| `resolveParent()` | `mib-tree-builder.ts` | Find a parent, with fallbacks |
+| `attachChild()` | `mib-tree-builder.ts` | Link a child, merging duplicates |
+| `detectMissingMibs()` | `mib-tree-builder.ts` | Name the MIBs the orphans need |
+| `registerSeedNodes()` | `mib-tree-builder.ts` | Create the standard SNMP hierarchy |
+| `parseMibModule()` | `mib-parser.ts` | Parse MIB text into a `ParsedModule` |
+| `validateMibContent()` | `mib-parser.ts` | Reject files that are not MIBs |
+| `filterTreeByQuery()` | `mib-parser.ts` | Filter the tree to search matches |
+| `rebuildAllTrees()` | `useMibStorage.ts` | Full rebuild, with error handling |
 
 ---
 
 ## Performance Considerations
 
+Measured figures, profiling instructions and the full list of optimizations live
+in [PERFORMANCE_EN.md](./PERFORMANCE_EN.md). In summary:
+
 ### Time Complexity
 
-- **Pass 1**: O(n) - n is total object count
-- **Pass 2**: O(n × m) - n is node count, m is average search time (nearly O(1) with maps)
-- **Pass 3**: O(n) - visit each node once
+| Stage | Complexity | Notes |
+|---|---|---|
+| Pass 1 | O(n) | n = total object count |
+| Pass 2 | O(n) | map lookups for both parent resolution and duplicate detection |
+| Pass 2.5 | O(orphans x rounds) | at most 3 rounds |
+| Pass 3 | O(n) | each node visited once, from `iso` only |
+| `convertToMibNode` | O(n) | allocates the output tree |
 
-**Overall**: O(n) - linear time, scalable to large MIBs
+Parsing the files, not building the tree, dominates a rebuild: it is the only
+stage that has to touch every byte.
 
 ### Space Complexity
 
-- **symbolMap**: O(n) - all symbols
-- **nameMap**: O(n) - all symbols (including duplicates)
-- **importsMap**: O(m) - m is import count
-- **Tree**: O(n) - node count
+`symbolMap`, `nameMap` and `childIndex` are each O(n), and the output tree is a
+second full copy of the nodes. Overall O(n), with a constant factor of roughly
+"three maps plus two trees".
 
-**Overall**: O(n) - linear space
+### Optimizations Applied
 
-### Optimizations
-
-1. **Map-based search**: O(1) reference resolution
-2. **Early exit**: Stop orphan rescue if no progress
-3. **Visited set**: Prevent infinite loops on circular references
-4. **IndexedDB persistence**: Reduce rebuild frequency
+1. **Map-based resolution** — parent lookup and duplicate detection are both
+   O(1); neither scans an array.
+2. **Single-traversal Pass 3** — only root seeds are traversed, and the
+   cycle-detection set is reused with backtracking rather than copied per child.
+3. **Early exit in orphan rescue** — stops as soon as no orphans remain.
+4. **Batched persistence** — one IndexedDB transaction per rebuild, on a cached
+   connection.
+5. **Tree persistence** — the built tree is stored, so a page reload renders it
+   without rebuilding.
 
 ---
 
@@ -1005,12 +1061,15 @@ function detectConflicts(mibs: Mib[], flatTree: MibNode[]): Map<string, Conflict
 
 ### Issue: Tree building is slow
 
-**Cause**: Large number of MIBs or complex dependencies
+**Cause**: Every added or removed file rebuilds the whole collection, and the
+rebuild re-parses every stored MIB.
 
-**Optimization**:
-1. Delete unnecessary MIBs
-2. Check IndexedDB cache (automatic)
-3. Profile with browser developer tools
+**Notes**:
+1. A bulk upload rebuilds once at the end, not once per file — if you are seeing
+   one rebuild per file, `skipReload` is not being passed through
+2. Delete MIBs you are not using; the cost scales with the total stored bytes
+3. The built tree is cached in IndexedDB, so a page reload does not rebuild
+4. To profile, see [PERFORMANCE_EN.md](./PERFORMANCE_EN.md)
 
 ---
 
@@ -1020,9 +1079,12 @@ function detectConflicts(mibs: Mib[], flatTree: MibNode[]): Map<string, Conflict
 
 Currently, full rebuild is performed when adding/deleting MIBs. Incremental updates would rebuild only affected subtrees.
 
-### 2. Parallel Processing
+### 2. Off the Main Thread
 
-For large MIB sets, Pass 1 (symbol registration) could be parallelized.
+Parsing dominates a rebuild and currently blocks the UI for its duration.
+Running `parseMibModule` for each file in a Web Worker would keep the app
+responsive even without incremental updates. (Pass 1 itself is not the
+bottleneck and shares mutable maps, so it is a poor parallelization target.)
 
 ### 3. Tree Validation
 
@@ -1033,8 +1095,9 @@ Post-build tree integrity checks:
 
 ### 4. Improved Cache Strategy
 
-- Cache parsed modules
-- Re-parse only changed modules
+- Cache parsed modules, so a rebuild re-parses only what changed
+- Avoid parsing an uploaded file twice (once for its module name, once in the
+  rebuild)
 - Incremental tree updates
 
 ### 5. Better Error Recovery
@@ -1052,14 +1115,15 @@ The MIB tree construction system is a robust solution for building a unified OID
 **Key Strengths**:
 - ✅ Modular 3-pass architecture
 - ✅ Comprehensive error handling
-- ✅ Efficient map-based reference resolution
+- ✅ Map-based reference resolution and duplicate detection, both O(1)
 - ✅ Not dependent on loading order
 - ✅ Duplicate and conflict detection
-- ✅ Scalable to large MIBs
+- ✅ Linear in the number of objects
 
 **Limitations**:
-- ⚠️ Requires full rebuild (no incremental updates)
-- ⚠️ Circular dependencies detected but not auto-resolved
+- ⚠️ Requires a full rebuild (no incremental updates)
+- ⚠️ Circular dependencies are detected and logged, not auto-resolved
+- ⚠️ Runs on the main thread, so a large rebuild blocks the UI
 - ⚠️ In-memory processing (limits for very large MIB sets)
 
 This documentation should help understand the MIB tree construction logic and support future maintenance and extensions.
