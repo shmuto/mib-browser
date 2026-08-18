@@ -15,6 +15,9 @@ dist-ssr
 # Test files
 test-*.js
 
+# Generated MIB corpus (see test-data/README.md)
+test-data/generated
+
 # GitHub issues directory
 github-issues
 

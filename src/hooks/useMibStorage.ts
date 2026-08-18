@@ -6,7 +6,10 @@ import { useState, useEffect, useCallback } from 'react';
 import type { StoredMibData, StorageInfo, UploadResult, MibConflict, MibNode } from '../types/mib';
 import {
   getAllMibs,
+  getMibByFileName,
+  countMibs,
   saveMib,
+  saveMibs,
   deleteMib,
   deleteMibs,
   getMib,
@@ -72,8 +75,8 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       const tree = await loadMergedTree();
       setMergedTree(tree);
 
-      // Get storage info
-      const info = await getStorageInfo();
+      // Get storage info (reuse the MIBs already read above)
+      const info = await getStorageInfo(loadedMibs);
       setStorageInfo(info);
     } catch (error) {
       console.error('Failed to load data:', error);
@@ -103,6 +106,13 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       let modules = [...allModules];
       const errorFiles = new Set<string>();
       let lastMissingMibs: string[] = [];
+
+      // MIB records mutated below; written back in a single batch at the end
+      // instead of one IndexedDB transaction per file.
+      const dirtyMibs = new Set<StoredMibData>();
+
+      // Look up MIB records by file name (avoids scanning allMibs repeatedly)
+      const mibsByFileName = new Map(allMibs.map(mib => [mib.fileName, mib]));
 
       // Max retry count (prevent infinite loop if dependencies cannot be resolved)
       const maxRetries = 10;
@@ -139,12 +149,12 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
                 errorFiles.add(module.fileName);
 
                 // Save error info to affected MIB
-                const mib = allMibs.find(m => m.fileName === module.fileName);
+                const mib = mibsByFileName.get(module.fileName);
                 if (mib) {
                   mib.error = `Missing MIB dependencies: ${dependsOnMissing.join(', ')}`;
                   mib.missingDependencies = dependsOnMissing;
                   mib.nodeCount = 0; // Node count is 0
-                  await saveMib(mib);
+                  dirtyMibs.add(mib);
                 }
               }
             }
@@ -164,7 +174,8 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
 
       // If tree build completely failed (no modules remaining)
       if (!tree || modules.length === 0) {
-        // Error info already saved to all MIBs
+        // Persist the error info collected above
+        await saveMibs(Array.from(dirtyMibs));
         await clearMergedTree();
         return;
       }
@@ -188,6 +199,16 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       const validMibs = allMibs.filter(mib => !errorFiles.has(mib.fileName));
       const parsedModuleMap = new Map(modules.map(m => [m.fileName, m]));
 
+      // Index tree nodes by "module::name" so conflict reporting can look up a
+      // node's OID directly instead of scanning the whole flat tree each time.
+      const nodeByModuleAndName = new Map<string, MibNode>();
+      for (const node of flatTree) {
+        const key = `${node.mibName}::${node.name}`;
+        if (!nodeByModuleAndName.has(key)) {
+          nodeByModuleAndName.set(key, node);
+        }
+      }
+
       // Group files by module name (exclude error files)
       const mibNameMap = new Map<string, StoredMibData[]>();
       for (const mib of validMibs) {
@@ -197,19 +218,15 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         mibNameMap.get(mib.mibName!)!.push(mib);
       }
 
-      // Identify files with duplicate module names
-      const duplicateModules = Array.from(mibNameMap.entries())
-        .filter(([_, mibs]) => mibs.length > 1);
-
       // Step 7: Detect conflicts and save (exclude error files)
       for (const mib of validMibs) {
         const conflicts: MibConflict[] = [];
 
         // Compare at node level with other files having same module name
-        const duplicateGroup = duplicateModules.find(([name]) => name === mib.mibName);
-        if (duplicateGroup) {
-          const [moduleName, duplicates] = duplicateGroup;
-          const otherDuplicates = duplicates.filter(m => m.id !== mib.id);
+        const sameModuleMibs = mibNameMap.get(mib.mibName!);
+        if (sameModuleMibs && sameModuleMibs.length > 1) {
+          const moduleName = mib.mibName!;
+          const otherDuplicates = sameModuleMibs.filter(m => m.id !== mib.id);
 
           // Get parse result for this file
           const thisModule = parsedModuleMap.get(mib.fileName);
@@ -246,7 +263,7 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
                 }
 
                 if (differences.length > 0) {
-                  const treeNode = flatTree.find(n => n.name === name && n.mibName === moduleName);
+                  const treeNode = nodeByModuleAndName.get(`${moduleName}::${name}`);
                   conflicts.push({
                     oid: treeNode?.oid || 'unknown',
                     name,
@@ -265,8 +282,11 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         mib.missingDependencies = undefined;
         mib.nodeCount = nodeCountByFile.get(mib.fileName) || 0;
 
-        await saveMib(mib);
+        dirtyMibs.add(mib);
       }
+
+      // Write every changed MIB record in a single transaction
+      await saveMibs(Array.from(dirtyMibs));
 
       // Notify if there are error files
       if (errorFiles.size > 0 && onNotification) {
@@ -299,9 +319,8 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       // Parse with parseMibModule() (OID unresolved)
       const parsedModule = parseMibModule(content, file.name);
 
-      // Get existing MIBs
-      const existingMibs = await getAllMibs();
-      const existingMib = existingMibs.find(mib => mib.fileName === file.name);
+      // Look up an existing record for this file (indexed lookup, not a full read)
+      const existingMib = await getMibByFileName(file.name);
 
       // Temporarily save as StoredMibData (nodeCount is 0)
       // Updated later by rebuildAllTrees
@@ -347,8 +366,8 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     try {
       await deleteMib(id);
       // Rebuild tree with remaining MIBs
-      const remainingMibs = await getAllMibs();
-      if (remainingMibs.length > 0) {
+      const remainingCount = await countMibs();
+      if (remainingCount > 0) {
         try {
           await rebuildAllTrees();
         } catch {
@@ -369,8 +388,8 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     try {
       await deleteMibs(ids);
       // Rebuild tree with remaining MIBs
-      const remainingMibs = await getAllMibs();
-      if (remainingMibs.length > 0) {
+      const remainingCount = await countMibs();
+      if (remainingCount > 0) {
         try {
           await rebuildAllTrees();
         } catch {
@@ -423,9 +442,7 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         return false;
       }
 
-      for (const mib of validMibs) {
-        await saveMib(mib);
-      }
+      await saveMibs(validMibs);
       await loadData();
       return true;
     } catch (error) {
@@ -449,9 +466,8 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       // Parse with parseMibModule() (OID unresolved)
       const parsedModule = parseMibModule(content, fileName);
 
-      // Get existing MIBs
-      const existingMibs = await getAllMibs();
-      const existingMib = existingMibs.find(mib => mib.fileName === fileName);
+      // Look up an existing record for this file (indexed lookup, not a full read)
+      const existingMib = await getMibByFileName(fileName);
 
       // Temporarily save as StoredMibData (nodeCount is 0)
       const mibData: StoredMibData = {

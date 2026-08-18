@@ -279,6 +279,24 @@ function removeComments(content: string): string {
 }
 
 /**
+ * Cheap pre-check before running one of the expensive block patterns.
+ * Those patterns scan the whole file with a lazy `[\s\S]*?`, so skipping the
+ * ones whose keyword does not appear at all saves a full scan each.
+ */
+function containsKeyword(content: string, keyword: RegExp): boolean {
+  return keyword.test(content);
+}
+
+// Keyword pre-checks (kept non-global so `test` has no lastIndex state)
+const HAS_MODULE_IDENTITY = /MODULE-IDENTITY/i;
+const HAS_OBJECT_IDENTITY = /OBJECT-IDENTITY/i;
+const HAS_NOTIFICATION_TYPE = /NOTIFICATION-TYPE/i;
+const HAS_MODULE_COMPLIANCE = /MODULE-COMPLIANCE/i;
+const HAS_OBJECT_GROUP = /OBJECT-GROUP/i;
+const HAS_NOTIFICATION_GROUP = /NOTIFICATION-GROUP/i;
+const HAS_TEXTUAL_CONVENTION = /TEXTUAL-CONVENTION/i;
+
+/**
  * Extract OBJECT IDENTIFIER definitions
  */
 function extractOidAssignments(
@@ -479,9 +497,12 @@ function extractObjectTypes(content: string): string[] {
       }
 
       // Count braces to track nesting depth
-      for (const char of line) {
-        if (char === '{') braceDepth++;
-        if (char === '}') braceDepth--;
+      // (charCodeAt instead of iterating the string: this runs over every line
+      // of every OBJECT-TYPE block in every file)
+      for (let c = 0; c < line.length; c++) {
+        const code = line.charCodeAt(c);
+        if (code === 123 /* { */) braceDepth++;
+        else if (code === 125 /* } */) braceDepth--;
       }
 
       // If we found the assignment and all braces are balanced, we're done
@@ -502,6 +523,9 @@ function extractObjectTypes(content: string): string[] {
  */
 function extractTextualConventions(content: string): import('../types/mib').TextualConvention[] {
   const conventions: import('../types/mib').TextualConvention[] = [];
+
+  // Most MIB modules define no TEXTUAL-CONVENTIONs; skip the scan entirely
+  if (!containsKeyword(content, HAS_TEXTUAL_CONVENTION)) return conventions;
 
   // Pattern: name ::= TEXTUAL-CONVENTION ... SYNTAX ...
   const pattern = /(\w+)\s*::=\s*TEXTUAL-CONVENTION([\s\S]*?)(?=\n\s*\w+\s*(?:::=|OBJECT-TYPE|OBJECT-IDENTITY|MODULE-IDENTITY|NOTIFICATION-TYPE)|$)/gi;
@@ -680,6 +704,13 @@ export function searchTree(tree: MibNode[], query: string): MibNode[] {
 }
 
 /**
+ * Escape regex metacharacters in a user-supplied search string
+ */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * Filter tree to show only matching nodes and their ancestors
  * @param tree MIB tree
  * @param query Search query
@@ -690,32 +721,66 @@ export function filterTreeByQuery(tree: MibNode[], query: string): MibNode[] {
 
   const lowerQuery = query.toLowerCase();
 
-  // Check if a node or any of its descendants match the query
-  function hasMatch(node: MibNode): boolean {
-    // Check current node
-    if (
+  // Descriptions are long, so they are matched with a case-insensitive regex
+  // instead of lower-casing a copy of every description in the tree.
+  const descriptionPattern = new RegExp(escapeRegExp(query), 'i');
+
+  function matchesSelf(node: MibNode): boolean {
+    return (
       node.name.toLowerCase().includes(lowerQuery) ||
       node.oid.includes(query) ||
-      node.description.toLowerCase().includes(lowerQuery)
-    ) {
-      return true;
+      (node.description !== '' && descriptionPattern.test(node.description))
+    );
+  }
+
+  // Single bottom-up pass: each node is visited exactly once.
+  // Returns a copy of the node if it matches or has a matching descendant.
+  // The children array is only allocated once a child is actually kept.
+  function filterNode(node: MibNode): MibNode | null {
+    let filteredChildren: MibNode[] | null = null;
+
+    for (const child of node.children) {
+      const filteredChild = filterNode(child);
+      if (filteredChild) {
+        if (!filteredChildren) filteredChildren = [];
+        filteredChildren.push(filteredChild);
+      }
     }
 
-    // Check children recursively
-    return node.children.some(child => hasMatch(child));
+    if (!filteredChildren && !matchesSelf(node)) {
+      return null;
+    }
+
+    return { ...node, children: filteredChildren ?? [] };
   }
 
-  // Filter tree recursively, keeping nodes that match or have matching descendants
-  function filterNodes(nodes: MibNode[]): MibNode[] {
-    return nodes
-      .filter(node => hasMatch(node))
-      .map(node => ({
-        ...node,
-        children: node.children.length > 0 ? filterNodes(node.children) : []
-      }));
+  const result: MibNode[] = [];
+  for (const node of tree) {
+    const filtered = filterNode(node);
+    if (filtered) result.push(filtered);
   }
 
-  return filterNodes(tree);
+  return result;
+}
+
+/**
+ * Count all nodes in a tree
+ * @param tree MIB tree
+ * @returns Total node count
+ */
+export function countTreeNodes(tree: MibNode[]): number {
+  let count = 0;
+
+  const stack: MibNode[] = [...tree];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    count++;
+    for (const child of node.children) {
+      stack.push(child);
+    }
+  }
+
+  return count;
 }
 
 /**
@@ -853,6 +918,14 @@ function extractOidAssignmentsRaw(
 ): Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string; status?: string }> {
   const assignments: Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string; status?: string }> = [];
 
+  // Skip whole-file scans for constructs this module does not use at all
+  const hasModuleIdentity = containsKeyword(content, HAS_MODULE_IDENTITY);
+  const hasObjectIdentity = containsKeyword(content, HAS_OBJECT_IDENTITY);
+  const hasNotificationType = containsKeyword(content, HAS_NOTIFICATION_TYPE);
+  const hasModuleCompliance = containsKeyword(content, HAS_MODULE_COMPLIANCE);
+  const hasObjectGroup = containsKeyword(content, HAS_OBJECT_GROUP);
+  const hasNotificationGroup = containsKeyword(content, HAS_NOTIFICATION_GROUP);
+
   // Pattern 1: identifier OBJECT IDENTIFIER ::= { ... }
   // Now supports both simple and named number formats
   const pattern1 = /(\w+)\s+OBJECT\s+IDENTIFIER\s*::=\s*(\{[^}]+\})/gi;
@@ -876,7 +949,7 @@ function extractOidAssignmentsRaw(
   // Pattern 2: identifier MODULE-IDENTITY ... ::= { ... }
   const pattern2 = /^\s*(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while ((match = pattern2.exec(content)) !== null) {
+  while (hasModuleIdentity && (match = pattern2.exec(content)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
@@ -899,7 +972,7 @@ function extractOidAssignmentsRaw(
   // Pattern 3: identifier OBJECT-IDENTITY ... ::= { ... }
   const pattern3 = /^\s*(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while ((match = pattern3.exec(content)) !== null) {
+  while (hasObjectIdentity && (match = pattern3.exec(content)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
@@ -922,7 +995,7 @@ function extractOidAssignmentsRaw(
   // Pattern 4: identifier NOTIFICATION-TYPE ... ::= { ... }
   const pattern4 = /^\s*(\w+)\s+NOTIFICATION-TYPE[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while ((match = pattern4.exec(content)) !== null) {
+  while (hasNotificationType && (match = pattern4.exec(content)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
@@ -950,7 +1023,7 @@ function extractOidAssignmentsRaw(
   // Pattern 5: identifier MODULE-COMPLIANCE ... ::= { ... }
   const pattern5 = /^\s*(\w+)\s+MODULE-COMPLIANCE[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while ((match = pattern5.exec(content)) !== null) {
+  while (hasModuleCompliance && (match = pattern5.exec(content)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
@@ -977,7 +1050,7 @@ function extractOidAssignmentsRaw(
   // Pattern 6: identifier OBJECT-GROUP ... ::= { ... }
   const pattern6 = /^\s*(\w+)\s+OBJECT-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while ((match = pattern6.exec(content)) !== null) {
+  while (hasObjectGroup && (match = pattern6.exec(content)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
@@ -1004,7 +1077,7 @@ function extractOidAssignmentsRaw(
   // Pattern 7: identifier NOTIFICATION-GROUP ... ::= { ... }
   const pattern7 = /^\s*(\w+)\s+NOTIFICATION-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while ((match = pattern7.exec(content)) !== null) {
+  while (hasNotificationGroup && (match = pattern7.exec(content)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 

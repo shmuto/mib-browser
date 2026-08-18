@@ -1,0 +1,42 @@
+TEST-MULTI-SUBID-MIB DEFINITIONS ::= BEGIN
+
+-- OID assignments that skip several levels at once, e.g.
+--   ::= { parent 3011 7124 3282 }
+-- and the named-number form  ::= { parent lan-man-stds(802) 1 }.
+-- Those intermediate sub-identifiers have no node of their own, which the
+-- breadcrumb and the tree walk both have to cope with.
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32
+        FROM SNMPv2-SMI
+    testBaseMIB
+        FROM TEST-BASE-MIB;
+
+testMultiSubIdMIB MODULE-IDENTITY
+    LAST-UPDATED "202601010000Z"
+    ORGANIZATION "MIB Browser Test Data"
+    CONTACT-INFO
+        "https://github.com/shmuto/mib-browser"
+    DESCRIPTION
+        "Multi sub-identifier OID assignments."
+    ::= { testBaseMIB 3 }
+
+deepBranch OBJECT IDENTIFIER ::= { testMultiSubIdMIB 3011 7124 3282 }
+
+namedBranch OBJECT IDENTIFIER ::= { testMultiSubIdMIB ieee(111) lan-man-stds(802) 1 }
+
+deepLeaf OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Leaf under a multi sub-identifier branch."
+    ::= { deepBranch 1 }
+
+namedLeaf OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Leaf under a named-number branch."
+    ::= { namedBranch 1 }
+
+END

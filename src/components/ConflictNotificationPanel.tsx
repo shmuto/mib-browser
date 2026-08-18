@@ -27,6 +27,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
   const conflictPairs = useMemo(() => {
     const pairs: ConflictPair[] = [];
     const processedPairs = new Set<string>();
+    const mibsByFileName = new Map(mibs.map(mib => [mib.fileName, mib]));
 
     mibs.forEach(mib => {
       if (!mib.conflicts || mib.conflicts.length === 0) return;
@@ -38,7 +39,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
       });
 
       conflictingFiles.forEach(fileName => {
-        const otherMib = mibs.find(m => m.fileName === fileName);
+        const otherMib = mibsByFileName.get(fileName);
         if (!otherMib) return;
 
         // Create unique key for pair (sorted alphabetically)

@@ -21,12 +21,23 @@ export class MibTreeBuilder {
   // Root nodes (iso, org, dod, internet, etc.)
   private seedNodes: TreeBuildNode[];
 
+  // Seed node lookup by name (avoids a linear scan per parent resolution)
+  private seedMap: Map<string, TreeBuildNode>;
+
+  // Per-parent index of "name|subid" -> child node.
+  // Lets parent linking detect duplicate children in O(1) instead of scanning
+  // the whole children array, which is quadratic for parents with many
+  // children (e.g. `enterprises` with hundreds of vendor MIBs loaded).
+  private childIndex: Map<TreeBuildNode, Map<string, TreeBuildNode>>;
+
   constructor() {
     this.symbolMap = new Map();
     this.nameMap = new Map();
     this.importsMap = new Map();
     this.orphanNodes = [];
     this.seedNodes = [];
+    this.seedMap = new Map();
+    this.childIndex = new Map();
     this.registerSeedNodes();
   }
 
@@ -99,9 +110,7 @@ export class MibTreeBuilder {
           const seedSubid = existingSeedNode.subid;
           const objSubid = obj.subid;
 
-          const subidsMatch = Array.isArray(seedSubid) && Array.isArray(objSubid)
-            ? seedSubid.length === objSubid.length && seedSubid.every((v, i) => v === objSubid[i])
-            : !Array.isArray(seedSubid) && !Array.isArray(objSubid) && seedSubid === objSubid;
+          const subidsMatch = this.subidsEqual(seedSubid, objSubid);
 
           // If seed node exists with same parent and subid, skip this node (use seed node instead)
           if (existingSeedNode.parentName === obj.parentName && subidsMatch) {
@@ -161,38 +170,72 @@ export class MibTreeBuilder {
       const parentNode = this.resolveParent(node);
 
       if (parentNode) {
-        // Check if already exists in parent's children (avoid duplicates from seed nodes or same definition in different MIBs)
-        const alreadyLinked = parentNode.children.some(child => child === node);
-
-        // Also check if a child with the same name and subid already exists (from different MIB defining the same node)
-        const duplicateChild = parentNode.children.find(child => {
-          const childNode = child as TreeBuildNode;
-          const subidsMatch = this.subidsEqual(childNode.subid, node.subid);
-          return childNode.name === node.name && subidsMatch;
-        });
-
-        if (!alreadyLinked && !duplicateChild) {
-          // Establish parent-child relationship (parent OID will be set in Pass3)
-          parentNode.children.push(node);
-        } else if (duplicateChild && duplicateChild !== node) {
-          // Merge: copy children from this node to the existing duplicate
-          const existingChild = duplicateChild as TreeBuildNode;
-          node.children.forEach(grandChild => {
-            const grandChildNode = grandChild as TreeBuildNode;
-            const existsInDuplicate = existingChild.children.some(c => {
-              const cn = c as TreeBuildNode;
-              return cn.name === grandChildNode.name && this.subidsEqual(cn.subid, grandChildNode.subid);
-            });
-            if (!existsInDuplicate) {
-              existingChild.children.push(grandChild);
-            }
-          });
-        }
+        // Link (or merge into an existing duplicate child) via the child index
+        this.attachChild(parentNode, node);
       } else {
         // Parent not found - add to Orphan List
         this.orphanNodes.push(node);
       }
     }
+  }
+
+  /**
+   * Key identifying a child within its parent ("name|subid")
+   */
+  private childKey(node: TreeBuildNode): string {
+    const subid = node.subid;
+    const subidKey = subid === undefined
+      ? ''
+      : Array.isArray(subid) ? `a${subid.join('.')}` : `n${subid}`;
+    return `${node.name}|${subidKey}`;
+  }
+
+  /**
+   * Get (creating if needed) the "name|subid" -> child index for a parent
+   */
+  private getChildIndex(parent: TreeBuildNode): Map<string, TreeBuildNode> {
+    let index = this.childIndex.get(parent);
+    if (!index) {
+      index = new Map();
+      for (const child of parent.children) {
+        index.set(this.childKey(child as TreeBuildNode), child as TreeBuildNode);
+      }
+      this.childIndex.set(parent, index);
+    }
+    return index;
+  }
+
+  /**
+   * Link a node under a parent, merging into an existing duplicate if the
+   * parent already has a child with the same name and subid.
+   */
+  private attachChild(parent: TreeBuildNode, node: TreeBuildNode): void {
+    const index = this.getChildIndex(parent);
+    const key = this.childKey(node);
+    const existing = index.get(key);
+
+    if (!existing) {
+      // Establish parent-child relationship (parent OID will be set in Pass3)
+      parent.children.push(node);
+      index.set(key, node);
+      return;
+    }
+
+    if (existing === node) {
+      // Already linked
+      return;
+    }
+
+    // Merge: copy children from this node to the existing duplicate
+    const existingIndex = this.getChildIndex(existing);
+    node.children.forEach(grandChild => {
+      const grandChildNode = grandChild as TreeBuildNode;
+      const grandChildKey = this.childKey(grandChildNode);
+      if (!existingIndex.has(grandChildKey)) {
+        existing.children.push(grandChild);
+        existingIndex.set(grandChildKey, grandChildNode);
+      }
+    });
   }
 
   /**
@@ -232,7 +275,7 @@ export class MibTreeBuilder {
     }
 
     // 3. Search seed nodes
-    parent = this.seedNodes.find(n => n.name === parentName);
+    parent = this.seedMap.get(parentName);
     if (parent) {
       return parent;
     }
@@ -258,33 +301,7 @@ export class MibTreeBuilder {
       currentOrphans.forEach(node => {
         const parent = this.resolveParent(node);
         if (parent) {
-          // Check if already exists in parent's children (avoid duplicates)
-          const alreadyLinked = parent.children.some(child => child === node);
-
-          // Also check if a child with the same name and subid already exists
-          const duplicateChild = parent.children.find(child => {
-            const childNode = child as TreeBuildNode;
-            const subidsMatch = this.subidsEqual(childNode.subid, node.subid);
-            return childNode.name === node.name && subidsMatch;
-          });
-
-          if (!alreadyLinked && !duplicateChild) {
-            // Establish parent-child relationship (parent OID will be set in Pass3)
-            parent.children.push(node);
-          } else if (duplicateChild && duplicateChild !== node) {
-            // Merge: copy children from this node to the existing duplicate
-            const existingChild = duplicateChild as TreeBuildNode;
-            node.children.forEach(grandChild => {
-              const grandChildNode = grandChild as TreeBuildNode;
-              const existsInDuplicate = existingChild.children.some(c => {
-                const cn = c as TreeBuildNode;
-                return cn.name === grandChildNode.name && this.subidsEqual(cn.subid, grandChildNode.subid);
-              });
-              if (!existsInDuplicate) {
-                existingChild.children.push(grandChild);
-              }
-            });
-          }
+          this.attachChild(parent, node);
         } else {
           this.orphanNodes.push(node); // Still orphan
         }
@@ -296,8 +313,12 @@ export class MibTreeBuilder {
 
   // === Pass 3: OID Computation ===
   private pass3_computeOids(): void {
-    // Compute OIDs recursively from seed nodes
+    // Compute OIDs recursively from the root seed nodes only.
+    // Most seeds (org, dod, internet, ...) are descendants of `iso`, so
+    // starting from every seed walked the same subtrees once per level of the
+    // seed hierarchy.
     this.seedNodes.forEach(seed => {
+      if (seed.parentName) return; // Reached through its own parent seed
       this.computeOidRecursive(seed, new Set());
     });
   }
@@ -305,7 +326,10 @@ export class MibTreeBuilder {
   private computeOidRecursive(node: TreeBuildNode, visited: Set<string>): void {
     const key = `${node.moduleName}::${node.name}`;
 
-    // Cycle detection
+    // Cycle detection.
+    // `visited` holds the nodes on the current root-to-node path only: entries
+    // are removed on the way back up, so a single Set is reused instead of
+    // copying it for every child (which was O(nodes x depth) allocations).
     if (visited.has(key)) {
       console.error(`[Cycle Detected] ${key}`);
       return;
@@ -335,8 +359,10 @@ export class MibTreeBuilder {
         childNode.parent = node.oid;
       }
 
-      this.computeOidRecursive(childNode, new Set(visited));
+      this.computeOidRecursive(childNode, visited);
     });
+
+    visited.delete(key);
   }
 
   // === Helper: Seed node registration ===
@@ -384,6 +410,7 @@ export class MibTreeBuilder {
         mibName: 'SNMPv2-SMI',
       };
       this.seedNodes.push(node);
+      this.seedMap.set(s.name, node);
       this.symbolMap.set(`SNMPv2-SMI::${s.name}`, node);
 
       if (!this.nameMap.has(s.name)) {
@@ -424,12 +451,13 @@ export class MibTreeBuilder {
     ];
 
     hierarchy.forEach(({ child, parent }) => {
-      const childNode = this.seedNodes.find(n => n.name === child);
-      const parentNode = this.seedNodes.find(n => n.name === parent);
+      const childNode = this.seedMap.get(child);
+      const parentNode = this.seedMap.get(parent);
 
       if (childNode && parentNode) {
         childNode.parent = parentNode.oid;
         childNode.parentName = parent; // Set parent name for duplicate detection
+        this.getChildIndex(parentNode).set(this.childKey(childNode), childNode);
         parentNode.children.push(childNode);
       }
     });
@@ -437,7 +465,7 @@ export class MibTreeBuilder {
 
   private buildTreeFromSeeds(): MibNode[] {
     // Return root structure from seed nodes (iso node only, or all top-level)
-    const isoNode = this.seedNodes.find(n => n.name === 'iso');
+    const isoNode = this.seedMap.get('iso');
     if (isoNode) {
       return [this.convertToMibNode(isoNode)];
     }

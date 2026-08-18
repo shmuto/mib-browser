@@ -1,0 +1,55 @@
+TEST-BASE-MIB DEFINITIONS ::= BEGIN
+
+-- Base module for the test fixtures.
+-- Defines the enterprise subtree that the other TEST-* modules hang off,
+-- so loading these files exercises cross-module IMPORTS resolution.
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-IDENTITY, OBJECT-TYPE, Integer32,
+    enterprises
+        FROM SNMPv2-SMI
+    DisplayString
+        FROM SNMPv2-TC;
+
+testBaseMIB MODULE-IDENTITY
+    LAST-UPDATED "202601010000Z"
+    ORGANIZATION "MIB Browser Test Data"
+    CONTACT-INFO
+        "https://github.com/shmuto/mib-browser"
+    DESCRIPTION
+        "Root module of the test fixture set. Everything else in
+         test-data/mibs is anchored under this subtree."
+    ::= { enterprises 99999 }
+
+testObjects OBJECT-IDENTITY
+    STATUS      current
+    DESCRIPTION "Container for the scalar objects of the base module."
+    ::= { testBaseMIB 1 }
+
+testExtensions OBJECT-IDENTITY
+    STATUS      current
+    DESCRIPTION "Anchor point used by TEST-EXTENSION-MIB."
+    ::= { testBaseMIB 2 }
+
+testName OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "A name string, used to check DisplayString handling."
+    ::= { testObjects 1 }
+
+testCounter OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "An integer scalar."
+    ::= { testObjects 2 }
+
+testDeprecated OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-write
+    STATUS      deprecated
+    DESCRIPTION "A deprecated object, to check STATUS rendering."
+    ::= { testObjects 3 }
+
+END

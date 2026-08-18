@@ -1,9 +1,39 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { Copy, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { MibNode, StoredMibData, TextualConvention } from '../types/mib';
 import OidBreadcrumb from './OidBreadcrumb';
 import { parseMibModule } from '../lib/mib-parser';
+
+// TEXTUAL-CONVENTION index: type name -> definition.
+// Parsing every stored MIB is expensive, so the index is built once per MIB
+// list (and only the first time a node with a SYNTAX is actually selected).
+interface TcIndex {
+  mibs: StoredMibData[];
+  byName: Map<string, TextualConvention>;
+}
+
+function buildTcIndex(mibs: StoredMibData[]): TcIndex {
+  const byName = new Map<string, TextualConvention>();
+
+  for (const mib of mibs) {
+    if (!mib.content) continue;
+    try {
+      const parsed = parseMibModule(mib.content, mib.fileName);
+      if (!parsed.textualConventions) continue;
+      for (const tc of parsed.textualConventions) {
+        // First definition wins, matching the previous first-match-by-file order
+        if (!byName.has(tc.name)) {
+          byName.set(tc.name, tc);
+        }
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  }
+
+  return { mibs, byName };
+}
 
 interface NodeDetailsProps {
   node: MibNode | null;
@@ -15,8 +45,9 @@ interface NodeDetailsProps {
 
 export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree }: NodeDetailsProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const tcIndexRef = useRef<TcIndex | null>(null);
 
-  // Parse TEXTUAL-CONVENTIONs from all loaded MIBs and find matching TC for this node's syntax
+  // Look up the TEXTUAL-CONVENTION matching this node's syntax
   // Must be called before any conditional returns (React hooks rule)
   const matchingTC = useMemo((): TextualConvention | null => {
     if (!node?.syntax) return null;
@@ -24,20 +55,12 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree 
     // Extract the type name from syntax (e.g., "DisplayString" from "DisplayString (SIZE (0..255))")
     const syntaxTypeName = node.syntax.split(/\s*\(/)[0].trim();
 
-    // Search all MIBs for matching TC
-    for (const mib of mibs) {
-      if (!mib.content) continue;
-      try {
-        const parsed = parseMibModule(mib.content, mib.fileName);
-        if (parsed.textualConventions) {
-          const tc = parsed.textualConventions.find(tc => tc.name === syntaxTypeName);
-          if (tc) return tc;
-        }
-      } catch {
-        // Ignore parse errors
-      }
+    // Rebuild the index only when the MIB list itself changed
+    if (!tcIndexRef.current || tcIndexRef.current.mibs !== mibs) {
+      tcIndexRef.current = buildTcIndex(mibs);
     }
-    return null;
+
+    return tcIndexRef.current.byName.get(syntaxTypeName) || null;
   }, [node?.syntax, mibs]);
 
   const copyToClipboard = async (text: string, fieldName: string) => {
