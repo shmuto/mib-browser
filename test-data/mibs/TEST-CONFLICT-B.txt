@@ -1,0 +1,35 @@
+TEST-CONFLICT-MIB DEFINITIONS ::= BEGIN
+
+-- Revision B. Same module name and object names as TEST-CONFLICT-A.txt,
+-- with different SYNTAX, ACCESS, STATUS and DESCRIPTION values.
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Gauge32, Integer32
+        FROM SNMPv2-SMI
+    testBaseMIB
+        FROM TEST-BASE-MIB;
+
+testConflictMIB MODULE-IDENTITY
+    LAST-UPDATED "202602010000Z"
+    ORGANIZATION "MIB Browser Test Data"
+    CONTACT-INFO
+        "https://github.com/shmuto/mib-browser"
+    DESCRIPTION
+        "Revision B of the conflicting module."
+    ::= { testBaseMIB 4 }
+
+conflictValue OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Revision B: measured as a gauge instead of an integer."
+    ::= { testConflictMIB 1 }
+
+conflictMode OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-write
+    STATUS      deprecated
+    DESCRIPTION "Operating mode."
+    ::= { testConflictMIB 2 }
+
+END

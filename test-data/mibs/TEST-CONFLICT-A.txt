@@ -1,0 +1,37 @@
+TEST-CONFLICT-MIB DEFINITIONS ::= BEGIN
+
+-- Revision A. Shares its module name and object names with
+-- TEST-CONFLICT-B.txt but defines them differently, so loading both files
+-- must raise the conflict panel. Differences: conflictValue SYNTAX and
+-- DESCRIPTION, conflictMode ACCESS and STATUS.
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32
+        FROM SNMPv2-SMI
+    testBaseMIB
+        FROM TEST-BASE-MIB;
+
+testConflictMIB MODULE-IDENTITY
+    LAST-UPDATED "202601010000Z"
+    ORGANIZATION "MIB Browser Test Data"
+    CONTACT-INFO
+        "https://github.com/shmuto/mib-browser"
+    DESCRIPTION
+        "Revision A of the conflicting module."
+    ::= { testBaseMIB 4 }
+
+conflictValue OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Revision A: measured as a plain integer."
+    ::= { testConflictMIB 1 }
+
+conflictMode OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Operating mode."
+    ::= { testConflictMIB 2 }
+
+END

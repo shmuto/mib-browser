@@ -1,0 +1,58 @@
+TEST-EXTENSION-MIB DEFINITIONS ::= BEGIN
+
+-- Depends on TEST-BASE-MIB. Load this file BEFORE TEST-BASE-MIB to check
+-- that the tree builder still resolves the parent once both are present
+-- (upload order must not matter).
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32
+        FROM SNMPv2-SMI
+    DisplayString
+        FROM SNMPv2-TC
+    testExtensions
+        FROM TEST-BASE-MIB;
+
+testExtensionMIB MODULE-IDENTITY
+    LAST-UPDATED "202601010000Z"
+    ORGANIZATION "MIB Browser Test Data"
+    CONTACT-INFO
+        "https://github.com/shmuto/mib-browser"
+    DESCRIPTION
+        "Extends TEST-BASE-MIB through an imported anchor node."
+    ::= { testExtensions 1 }
+
+extTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF ExtEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "A table, to check that nested INDEX braces are parsed."
+    ::= { testExtensionMIB 1 }
+
+extEntry OBJECT-TYPE
+    SYNTAX      ExtEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "A row of extTable."
+    INDEX   { extIndex }
+    ::= { extTable 1 }
+
+ExtEntry ::= SEQUENCE {
+    extIndex        Integer32,
+    extLabel        DisplayString
+}
+
+extIndex OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "Row index."
+    ::= { extEntry 1 }
+
+extLabel OBJECT-TYPE
+    SYNTAX      DisplayString
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Row label."
+    ::= { extEntry 2 }
+
+END
