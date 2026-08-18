@@ -63,24 +63,19 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
     return { file, result };
   }, [onUpload]);
 
-  const processRemainingFiles = useCallback(async (
-    files: File[],
-    startIndex: number,
-    totalFiles: number
+  // Upload files one by one. Only the last file triggers a tree rebuild;
+  // the rest are stored with skipReload so the tree is built once.
+  const processFiles = useCallback(async (
+    files: File[]
   ): Promise<Array<{ file: File; result: UploadResult }>> => {
-    if (files.length === 0) {
-      return [];
+    const results: Array<{ file: File; result: UploadResult }> = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const skipReload = i < files.length - 1;
+      results.push(await processUpload(files[i], skipReload, i + 1, files.length));
     }
 
-    const [nextFile, ...rest] = files;
-
-    // Enable skipReload if there are remaining files
-    const skipReload = rest.length > 0;
-    const uploadResult = await processUpload(nextFile, skipReload, startIndex, totalFiles);
-
-    // Process next file
-    const remainingResults = await processRemainingFiles(rest, startIndex + 1, totalFiles);
-    return [uploadResult, ...remainingResults];
+    return results;
   }, [processUpload]);
 
   const showUploadSummary = useCallback((results: Array<{ file: File; result: UploadResult }>) => {
@@ -190,19 +185,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         totalFiles: totalFiles,
       });
 
-      // Process first file
-      const [firstFile, ...rest] = fileArray;
-
-      // Enable skipReload if there are remaining files
-      const skipReload = rest.length > 0;
-      const firstResult = await processUpload(firstFile, skipReload, 1, totalFiles);
-
-      let allResults = [firstResult];
-
-      if (rest.length > 0) {
-        const remainingResults = await processRemainingFiles(rest, 2, totalFiles);
-        allResults = [...allResults, ...remainingResults];
-      }
+      const allResults = await processFiles(fileArray);
 
       // Execute reload
       if (onReload) {
@@ -220,7 +203,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         totalFiles: 0,
       });
     }
-  }, [processUpload, processRemainingFiles, onReload, showUploadSummary]);
+  }, [processFiles, onReload, showUploadSummary]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -246,19 +229,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         totalFiles: totalFiles,
       });
 
-      // Process first file
-      const [firstFile, ...rest] = fileArray;
-
-      // Enable skipReload if there are remaining files
-      const skipReload = rest.length > 0;
-      const firstResult = await processUpload(firstFile, skipReload, 1, totalFiles);
-
-      let allResults = [firstResult];
-
-      if (rest.length > 0) {
-        const remainingResults = await processRemainingFiles(rest, 2, totalFiles);
-        allResults = [...allResults, ...remainingResults];
-      }
+      const allResults = await processFiles(fileArray);
 
       // Execute reload
       if (onReload) {
@@ -276,7 +247,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         totalFiles: 0,
       });
     }
-  }, [processUpload, processRemainingFiles, onReload, showUploadSummary]);
+  }, [processFiles, onReload, showUploadSummary]);
 
   const handleButtonClick = useCallback(() => {
     fileInputRef.current?.click();

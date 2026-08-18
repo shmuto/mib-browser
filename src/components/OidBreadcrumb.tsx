@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { ChevronRight, Home } from 'lucide-react';
 import type { MibNode } from '../types/mib';
 import { getOidPath } from '../lib/oid-utils';
@@ -9,30 +10,26 @@ interface OidBreadcrumbProps {
 }
 
 export default function OidBreadcrumb({ node, tree, onNavigate }: OidBreadcrumbProps) {
-  // Get OID path from root to current node
-  const oidPath = getOidPath(node.oid);
+  // Build breadcrumb items by descending the tree once along the OID path,
+  // instead of searching the whole tree for every OID in the path.
+  const breadcrumbItems = useMemo(() => {
+    const oidPath = getOidPath(node.oid);
+    const items: Array<{ oid: string; name: string; node: MibNode }> = [];
 
-  // Find node by OID in the tree
-  const findNodeByOid = (nodes: MibNode[], targetOid: string): MibNode | null => {
-    for (const n of nodes) {
-      if (n.oid === targetOid) return n;
-      if (n.children.length > 0) {
-        const found = findNodeByOid(n.children, targetOid);
-        if (found) return found;
+    let currentLevel = tree;
+    for (const oid of oidPath) {
+      const found = currentLevel.find(n => n.oid === oid);
+      if (!found) {
+        // OID has no node of its own (e.g. an intermediate sub-identifier of a
+        // multi-subid assignment) - keep looking at the same level
+        continue;
       }
+      items.push({ oid, name: found.name, node: found });
+      currentLevel = found.children;
     }
-    return null;
-  };
 
-  // Build breadcrumb items
-  const breadcrumbItems = oidPath.map(oid => {
-    const foundNode = findNodeByOid(tree, oid);
-    return {
-      oid,
-      name: foundNode?.name || oid,
-      node: foundNode,
-    };
-  }).filter(item => item.node !== null);
+    return items;
+  }, [node.oid, tree]);
 
   if (breadcrumbItems.length === 0) return null;
 

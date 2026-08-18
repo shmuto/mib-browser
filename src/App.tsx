@@ -1,7 +1,7 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useDeferredValue } from 'react';
 import type { MibNode, StoredMibData } from './types/mib';
 import { useMibStorage } from './hooks/useMibStorage';
-import { filterTreeByQuery } from './lib/mib-parser';
+import { filterTreeByQuery, countTreeNodes } from './lib/mib-parser';
 import { getOidPath } from './lib/oid-utils';
 import { sanitizeFileName } from './lib/storage';
 import toast, { Toaster } from 'react-hot-toast';
@@ -60,23 +60,20 @@ export default function App() {
     localStorage.setItem('mib-browser-compact-mode', String(compactMode));
   }, [compactMode]);
 
+  // Filtering a large tree is expensive, so it runs against a deferred copy of
+  // the query: typing stays responsive and React re-filters at low priority.
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+
   // Search filtering - show only matching nodes and their ancestors
   const filteredTree = useMemo(() => {
-    return filterTreeByQuery(mergedTree, searchQuery);
-  }, [mergedTree, searchQuery]);
+    return filterTreeByQuery(mergedTree, deferredSearchQuery);
+  }, [mergedTree, deferredSearchQuery]);
 
   // Count total nodes in filtered tree
   const searchResultCount = useMemo(() => {
-    if (!searchQuery) return undefined;
-
-    const countNodes = (nodes: MibNode[]): number => {
-      return nodes.reduce((count, node) => {
-        return count + 1 + countNodes(node.children);
-      }, 0);
-    };
-
-    return countNodes(filteredTree);
-  }, [filteredTree, searchQuery]);
+    if (!deferredSearchQuery) return undefined;
+    return countTreeNodes(filteredTree);
+  }, [filteredTree, deferredSearchQuery]);
 
   const handleDeleteMib = useCallback(async (id: string) => {
     const mib = mibs.find(m => m.id === id);
@@ -154,16 +151,31 @@ export default function App() {
     setExpandedOids(new Set());
   }, []);
 
-  // Toggle individual node expand/collapse
+  // Toggle individual node expand/collapse.
+  // Collapsing also drops every expanded descendant in the same update; doing it
+  // one node at a time meant copying the whole Set per descendant.
   const handleToggleExpand = useCallback((oid: string, expanded: boolean) => {
     setExpandedOids(prev => {
-      const newSet = new Set(prev);
       if (expanded) {
+        if (prev.has(oid)) return prev;
+        const newSet = new Set(prev);
         newSet.add(oid);
-      } else {
-        newSet.delete(oid);
+        return newSet;
       }
-      return newSet;
+
+      const descendantPrefix = `${oid}.`;
+      const newSet = new Set<string>();
+      let changed = false;
+
+      for (const expandedOid of prev) {
+        if (expandedOid === oid || expandedOid.startsWith(descendantPrefix)) {
+          changed = true;
+          continue;
+        }
+        newSet.add(expandedOid);
+      }
+
+      return changed ? newSet : prev;
     });
   }, []);
 
@@ -289,7 +301,7 @@ export default function App() {
                   tree={filteredTree}
                   onSelectNode={setSelectedNode}
                   selectedOid={selectedNode?.oid || null}
-                  searchQuery={searchQuery}
+                  searchQuery={deferredSearchQuery}
                   expandedOids={expandedOids}
                   onToggleExpand={handleToggleExpand}
                   compactMode={compactMode}
