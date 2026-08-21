@@ -295,6 +295,14 @@ Things that are load-bearing and not obvious from the code alone:
   what the rebuild holds in memory; the IndexedDB writes follow. Anything that
   reads the tree back to populate state would put the write back on the
   critical path.
+- **Regexes run over MIB text must be linear.** The content is a file the user
+  supplied, so a pattern that backtracks quadratically is a way to hang the tab,
+  and CodeQL flags it as `js/polynomial-redos`. Spell out the alternatives you
+  mean rather than skipping ahead with something like `[^;]*?`: the module
+  header pattern did that to allow `DEFINITIONS IMPLICIT TAGS ::=` and went
+  quadratic — 1 s on 256 KB that never matched, and four times that on 512 KB.
+  A quick check is to run a candidate against `'A DEFINITIONS x\n'.repeat(n)`
+  for growing n and confirm the time grows with n rather than n².
 - **The keyword guards in the parser must stay case-insensitive.** The block
   patterns are `/i`; a guard using `indexOf` on an uppercase literal would skip
   lower-case definitions.

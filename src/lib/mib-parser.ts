@@ -25,10 +25,12 @@ function extractMibName(content: string): string | null {
  */
 function extractMibNameFromCleaned(cleanedContent: string): string | null {
   // Look for pattern like "IF-MIB DEFINITIONS ::= BEGIN".
-  // ASN.1 allows tagging keywords between the two, e.g.
-  // "FOO-MIB DEFINITIONS IMPLICIT TAGS ::= BEGIN".
+  // ASN.1 allows a tagging clause between the two, so those keywords are
+  // spelled out. They are spelled out rather than skipped with something like
+  // `[^;]*?`, which would make this quadratic in the length of a file that
+  // never matches - and the file comes from the user.
   const definitionsMatch = cleanedContent.match(
-    /^\s*([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS\b[^;]*?::=/m
+    /^\s*([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS(?:\s+(?:AUTOMATIC|IMPLICIT|EXPLICIT)\s+TAGS)?(?:\s+EXTENSIBILITY\s+IMPLIED)?\s*::=/m
   );
   if (definitionsMatch) {
     return definitionsMatch[1];
