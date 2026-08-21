@@ -1,0 +1,23 @@
+TEST-TC-ONLY-MIB DEFINITIONS ::= BEGIN
+
+-- A module that defines nothing but TEXTUAL-CONVENTIONs, the way IPV6-TC
+-- (RFC 2465) and similar type-only modules do. It contributes no nodes to the
+-- tree, but other modules import its types, and the details panel resolves a
+-- node's SYNTAX against it - so it has to be accepted on upload.
+
+IMPORTS
+    Integer32          FROM SNMPv2-SMI
+    TEXTUAL-CONVENTION FROM SNMPv2-TC;
+
+TestPortState ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION  "State of a port."
+    SYNTAX       INTEGER { unknown(0), up(1), down(2), blocked(3) }
+
+TestMacAddress ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "1x:"
+    STATUS       current
+    DESCRIPTION  "A hardware address, six octets in network byte order."
+    SYNTAX       OCTET STRING (SIZE (6))
+
+END
