@@ -96,7 +96,11 @@ Reference points, not guarantees. Synthetic corpus, Chromium, warm cache.
 | Upload (parse + build + persist) | ~625 ms |
 | Expand All | ~85 ms |
 | Collapse All | ~60 ms |
-| Selecting a node | ~40 ms |
+| Selecting a node | one frame |
+
+"One frame" means the worst gap between animation frames after the click is
+~17 ms, i.e. no visible stall. That is the number to watch for selection: a
+regression here shows up as a gap of several frames, not as a slower average.
 
 Parsing now dominates the rebuild. That is expected: it is the only stage that
 has to touch every byte of every file.
@@ -167,8 +171,25 @@ file name — quadratic over a bulk upload. It uses the `fileName` index. Delete
 read every record just to check whether any were left; it counts instead.
 
 **Every MIB re-parsed on each node click.** `NodeDetails` looked for a matching
-`TEXTUAL-CONVENTION` by parsing every stored MIB, on every selection. The index
-is built once per MIB list. *This was most of the 14x on node selection.*
+`TEXTUAL-CONVENTION` by parsing every stored MIB, on every selection.
+*This was most of the 14x on node selection.*
+
+**...and then re-parsed once after every file change.** Caching that index per
+MIB list removed the per-click cost but left one full re-parse on the first node
+click after any upload or delete — a 150–270 ms stall at 5 MB of MIBs, growing
+with the collection. The rebuild already parses every module, so it now collects
+the TEXTUAL-CONVENTIONs and stores them next to the merged tree; the details
+panel does a map lookup. A tree stored before this still falls back to parsing
+on demand.
+
+**Selecting a node invalidated the whole row model.** The effect that expands
+the path to the selected node always handed back a new `Set`, so every click
+changed `expandedOids` by identity and made the tree view rebuild all of its
+rows — the entire tree, once Expand All had been used. It now returns the
+previous `Set` when the path is already expanded, and does not add the selected
+node's own OID unless it has children, since expanding a leaf means nothing.
+Leaves are most of what gets clicked, so without that second part the first part
+almost never applies.
 
 **Full-tree search per breadcrumb segment.** `OidBreadcrumb` searched the entire
 tree for each OID in the path; it descends the path once instead.
@@ -184,6 +205,13 @@ Things that are load-bearing and not obvious from the code alone:
   badge — breaks scrolling silently. Keep long text on `truncate`.
 - **Expansion state is keyed by OID string.** That is what lets collapse work by
   prefix, and what lets expansion survive a rebuild.
+- **`expandedOids` must keep its identity when nothing changed.** It is a
+  dependency of the tree view's row model; handing back a fresh `Set` on every
+  selection rebuilds every row.
+- **Tree rows are recycled by position.** Rows are keyed by index so React can
+  reuse the DOM while scrolling, which means any state a row keeps in a ref
+  belongs to the *position*, not to the node. Anything node-specific must record
+  which OID it belongs to — as the double-click detection does.
 - **A `MibTreeBuilder` is single-use.** Its symbol, name and child maps
   accumulate across a build, so every build needs a fresh instance — this is
   why the retry loop in `rebuildAllTrees` constructs one each time round. The
@@ -209,5 +237,11 @@ Things that are load-bearing and not obvious from the code alone:
   entire tree on every rebuild.
 - **Each file is parsed twice on upload** — once for its module name, once
   during the rebuild. Harmless for a few files, wasteful for hundreds.
+- **The row model covers every visible row, not just the rendered window.**
+  `flattenVisibleRows` has to walk all expanded branches to know the list's
+  height, so with Expand All on a large tree each rebuild allocates one row
+  object per node. It is only rebuilt when the tree, the expansion set, compact
+  mode or the query changes — keeping it that way is what keeps interaction
+  cheap.
 - **The tree is held twice in memory** during filtering: `filterTreeByQuery`
   returns copies of the matching nodes rather than a view.
