@@ -1,0 +1,20 @@
+-- file: TEST-EMPTY-MODULE-MIB.txt
+-- A module whose body is entirely commented out, the way RFC-1212 is shipped
+-- in most MIB collections: the OBJECT-TYPE macro definition is left in the
+-- file as comments so tools that already know the macro can still load it.
+--
+-- It is a valid module that happens to define nothing. Uploading it must
+-- succeed and simply contribute 0 nodes - a bulk upload of a standard MIB
+-- directory should not report errors for files like this.
+
+TEST-EMPTY-MODULE-MIB DEFINITIONS ::= BEGIN
+
+--  OBJECT-TYPE MACRO ::=
+--  BEGIN
+--      TYPE NOTATION ::= "SYNTAX" type(ObjectSyntax)
+--                        "ACCESS" Access
+--                        "STATUS" Status
+--      VALUE NOTATION ::= value (VALUE ObjectName)
+--  END
+
+END

@@ -44,7 +44,7 @@ function extractMibNameFromCleaned(cleanedContent: string): string | null {
  * @returns Object with isValid flag and error message if invalid
  */
 export function validateMibContent(content: string): { isValid: boolean; error?: string } {
-  // Every check runs against the comment-stripped text, so a keyword that only
+  // Checks run against the comment-stripped text, so a keyword that only
   // appears in a comment does not make a file look like a MIB
   const cleanedContent = removeComments(content);
 
@@ -73,27 +73,12 @@ export function validateMibContent(content: string): { isValid: boolean; error?:
     };
   }
 
-  // Check 4: Must define something. TEXTUAL-CONVENTION and the conformance
-  // macros count: modules such as IPV6-TC define nothing but textual
-  // conventions, and other modules import from them.
-  const definesSomething = [
-    /OBJECT-TYPE/i,
-    /OBJECT\s+IDENTIFIER/i,
-    /MODULE-IDENTITY/i,
-    /OBJECT-IDENTITY/i,
-    /NOTIFICATION-TYPE/i,
-    /TEXTUAL-CONVENTION/i,
-    /OBJECT-GROUP/i,
-    /NOTIFICATION-GROUP/i,
-    /MODULE-COMPLIANCE/i,
-  ].some(pattern => pattern.test(cleanedContent));
-
-  if (!definesSomething) {
-    return {
-      isValid: false,
-      error: 'Invalid MIB file: No SMI definitions found (OBJECT-TYPE, OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY, NOTIFICATION-TYPE, TEXTUAL-CONVENTION or a conformance group)',
-    };
-  }
+  // There is deliberately no "must define something" check. A module that
+  // defines nothing is still a module: RFC-1212 as shipped in most MIB
+  // collections has its whole body commented out, and macro-only modules
+  // define constructs this parser does not model. Such a file contributes no
+  // nodes and shows a node count of 0, which says everything a rejection would
+  // - without making a bulk upload of a standard MIB directory look broken.
 
   return { isValid: true };
 }
