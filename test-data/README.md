@@ -34,6 +34,10 @@ Expected results once all nine are loaded:
 - `TestPortState` and `TestMacAddress` are offered as enumerated values in the
   details panel, though `TEST-TC-ONLY-MIB` adds no rows to the tree
 
+These expectations are asserted by [`tests/fixtures.test.ts`](../tests/fixtures.test.ts),
+so a fixture added here wants a case added there as well — otherwise the file is
+documentation that nothing checks.
+
 ## `generate-large-corpus.mjs` — volume for performance work
 
 The fixtures above are far too small to show anything about performance, and

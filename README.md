@@ -40,9 +40,17 @@ assignments such as `::= { parent 3011 7124 3282 }`.
 
 ```bash
 bun install
-bun run dev      # dev server
-bun run build    # typecheck + production build into dist/
+bun run dev        # dev server
+bun test           # unit tests
+bun run typecheck  # tsc --noEmit
+bun run build      # typecheck + production build into dist/
 ```
+
+Tests live in [`tests/`](./tests) and cover the parser, the tree builder and the
+OID helpers — including a regression case for every real-world MIB shape that
+has tripped the parser up. They run on every pull request. `tests/fixtures.test.ts`
+holds the files in [`test-data/mibs`](./test-data) to the behaviour their README
+describes, so a new fixture wants an expectation there too.
 
 Try it with the fixtures in [`test-data/`](./test-data/README.md), or with
 `public/sample-mibs/SAMPLE-MIB.txt`.
@@ -59,6 +67,7 @@ src/
   lib/           parsing, tree building, OID helpers, IndexedDB access
   types/         shared type definitions
 docs/            architecture and internals
+tests/           unit tests (bun test)
 test-data/       MIB fixtures and a generator for large corpora
 public/          static assets, including a sample MIB
 ```
