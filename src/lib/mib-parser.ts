@@ -12,8 +12,26 @@ import { getParentOid } from './oid-utils';
  * @returns MIB module name or null
  */
 function extractMibName(content: string): string | null {
-  // Look for pattern like "IF-MIB DEFINITIONS ::= BEGIN"
-  const definitionsMatch = content.match(/^\s*([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS\s*::=/m);
+  // Comments are stripped first: the module name and DEFINITIONS are often
+  // separated by one, as in
+  //   FROGFOOT-RESOURCES-MIB
+  //   -- -*- mib -*-
+  //   DEFINITIONS ::= BEGIN
+  return extractMibNameFromCleaned(removeComments(content));
+}
+
+/**
+ * Extract the MIB module name from content that has already had comments removed
+ */
+function extractMibNameFromCleaned(cleanedContent: string): string | null {
+  // Look for pattern like "IF-MIB DEFINITIONS ::= BEGIN".
+  // ASN.1 allows a tagging clause between the two, so those keywords are
+  // spelled out. They are spelled out rather than skipped with something like
+  // `[^;]*?`, which would make this quadratic in the length of a file that
+  // never matches - and the file comes from the user.
+  const definitionsMatch = cleanedContent.match(
+    /^\s*([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS(?:\s+(?:AUTOMATIC|IMPLICIT|EXPLICIT)\s+TAGS)?(?:\s+EXTENSIBILITY\s+IMPLIED)?\s*::=/m
+  );
   if (definitionsMatch) {
     return definitionsMatch[1];
   }
@@ -26,8 +44,12 @@ function extractMibName(content: string): string | null {
  * @returns Object with isValid flag and error message if invalid
  */
 export function validateMibContent(content: string): { isValid: boolean; error?: string } {
+  // Every check runs against the comment-stripped text, so a keyword that only
+  // appears in a comment does not make a file look like a MIB
+  const cleanedContent = removeComments(content);
+
   // Check 1: Must have MIB module definition (MODULE-NAME DEFINITIONS ::= BEGIN)
-  const mibName = extractMibName(content);
+  const mibName = extractMibNameFromCleaned(cleanedContent);
   if (!mibName) {
     return {
       isValid: false,
@@ -36,7 +58,7 @@ export function validateMibContent(content: string): { isValid: boolean; error?:
   }
 
   // Check 2: Must have BEGIN keyword
-  if (!/\bBEGIN\b/i.test(content)) {
+  if (!/\bBEGIN\b/i.test(cleanedContent)) {
     return {
       isValid: false,
       error: 'Invalid MIB file: Missing BEGIN keyword',
@@ -44,24 +66,32 @@ export function validateMibContent(content: string): { isValid: boolean; error?:
   }
 
   // Check 3: Must have END keyword
-  if (!/\bEND\b/i.test(content)) {
+  if (!/\bEND\b/i.test(cleanedContent)) {
     return {
       isValid: false,
       error: 'Invalid MIB file: Missing END keyword',
     };
   }
 
-  // Check 4: Should have at least one of: OBJECT-TYPE, OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY, NOTIFICATION-TYPE
-  const hasObjectType = /OBJECT-TYPE/i.test(content);
-  const hasObjectIdentifier = /OBJECT\s+IDENTIFIER/i.test(content);
-  const hasModuleIdentity = /MODULE-IDENTITY/i.test(content);
-  const hasObjectIdentity = /OBJECT-IDENTITY/i.test(content);
-  const hasNotificationType = /NOTIFICATION-TYPE/i.test(content);
+  // Check 4: Must define something. TEXTUAL-CONVENTION and the conformance
+  // macros count: modules such as IPV6-TC define nothing but textual
+  // conventions, and other modules import from them.
+  const definesSomething = [
+    /OBJECT-TYPE/i,
+    /OBJECT\s+IDENTIFIER/i,
+    /MODULE-IDENTITY/i,
+    /OBJECT-IDENTITY/i,
+    /NOTIFICATION-TYPE/i,
+    /TEXTUAL-CONVENTION/i,
+    /OBJECT-GROUP/i,
+    /NOTIFICATION-GROUP/i,
+    /MODULE-COMPLIANCE/i,
+  ].some(pattern => pattern.test(cleanedContent));
 
-  if (!hasObjectType && !hasObjectIdentifier && !hasModuleIdentity && !hasObjectIdentity && !hasNotificationType) {
+  if (!definesSomething) {
     return {
       isValid: false,
-      error: 'Invalid MIB file: No OBJECT-TYPE, OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY, or NOTIFICATION-TYPE definitions found',
+      error: 'Invalid MIB file: No SMI definitions found (OBJECT-TYPE, OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY, NOTIFICATION-TYPE, TEXTUAL-CONVENTION or a conformance group)',
     };
   }
 
@@ -627,7 +657,8 @@ function parseObjectType(content: string, oidMap: Map<string, string>): FlatMibN
   // Resolve parent OID
   const parentOid = oidMap.get(parentName);
   if (!parentOid) {
-    console.warn(`Parent OID not found for ${parentName}`);
+    // Kept out of the format-string argument: it comes from the MIB text
+    console.warn('Parent OID not found for:', parentName);
     return null;
   }
 
@@ -814,8 +845,8 @@ export function flattenTree(tree: MibNode[]): MibNode[] {
  * @returns ParsedModule
  */
 export function parseMibModule(content: string, fileName?: string): import('../types/mib').ParsedModule {
-  const mibName = extractMibName(content) || 'UNKNOWN';
   const cleanedContent = removeComments(content);
+  const mibName = extractMibNameFromCleaned(cleanedContent) || 'UNKNOWN';
 
   // Extract IMPORTS before removing IMPORTS block
   const imports = extractImports(cleanedContent);

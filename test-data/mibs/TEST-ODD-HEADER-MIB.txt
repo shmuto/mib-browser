@@ -1,0 +1,28 @@
+TEST-ODD-HEADER-MIB
+
+-- -*- mib -*-
+-- The module name, a comment, and only then DEFINITIONS - a layout real MIBs
+-- use (FROGFOOT-RESOURCES-MIB among them). Also uses the ASN.1 tagging
+-- keywords, which are legal between DEFINITIONS and ::=.
+
+DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI;
+
+testOddHeaderMIB MODULE-IDENTITY
+    LAST-UPDATED "202601010000Z"
+    ORGANIZATION "MIB Browser Test Data"
+    CONTACT-INFO "https://github.com/shmuto/mib-browser"
+    DESCRIPTION  "Module whose header is split across a comment."
+    ::= { enterprises 99998 }
+
+oddCounter OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "A counter, so the module contributes a node."
+    ::= { testOddHeaderMIB 1 }
+
+END
