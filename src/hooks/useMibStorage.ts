@@ -2,8 +2,8 @@
  * Custom hook for MIB storage (IndexedDB version)
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import type { StoredMibData, StorageInfo, UploadResult, MibConflict, MibNode, TextualConvention } from '../types/mib';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import type { StoredMibData, StorageInfo, UploadResult, MibConflict, MibNode, TextualConvention, ParsedModule } from '../types/mib';
 import {
   getAllMibs,
   getMibByFileName,
@@ -62,6 +62,41 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     }
   }, []);
 
+  // Parsed modules from earlier in this session, keyed by MIB id.
+  // A rebuild re-parses every stored MIB, but only the file that changed can
+  // have a different body, so the rest are handed back from here. It is kept in
+  // memory rather than IndexedDB on purpose: a page reload does not rebuild (it
+  // renders the stored tree), so persisting it would buy nothing and cost a
+  // serialization round trip.
+  const parseCacheRef = useRef<Map<string, { content: string; module: ParsedModule }>>(new Map());
+
+  // Parse a stored MIB, reusing the previous result when its content is unchanged
+  const parseWithCache = useCallback((mib: StoredMibData): ParsedModule => {
+    const cached = parseCacheRef.current.get(mib.id);
+    if (cached && cached.content === mib.content) {
+      return cached.module;
+    }
+
+    const module = parseMibModule(mib.content, mib.fileName);
+    parseCacheRef.current.set(mib.id, { content: mib.content, module });
+    return module;
+  }, []);
+
+  // Push freshly built data into React state.
+  // Called before the IndexedDB writes so the UI does not wait on them - writing
+  // the merged tree is the slowest step of a rebuild and nothing on screen
+  // depends on it having finished.
+  const publishState = useCallback((
+    nextMibs: StoredMibData[],
+    nextTree: MibNode[],
+    nextTcs: TextualConvention[] | undefined
+  ) => {
+    setMibs([...nextMibs]);
+    setMergedTree(nextTree);
+    setTextualConventions(nextTcs);
+    getStorageInfo(nextMibs).then(setStorageInfo).catch(() => { /* usage figures are cosmetic */ });
+  }, []);
+
   // Load data
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -94,10 +129,16 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       // Step 1: Get content of all MIBs
       const allMibs = await getAllMibs();
 
-      // Step 2: Convert all to ParsedModule format
+      // Drop cache entries for MIBs that no longer exist
+      const liveIds = new Set(allMibs.map(mib => mib.id));
+      for (const id of parseCacheRef.current.keys()) {
+        if (!liveIds.has(id)) parseCacheRef.current.delete(id);
+      }
+
+      // Step 2: Convert all to ParsedModule format (reusing unchanged parses)
       const allModules = allMibs.map(mib => {
         try {
-          return parseMibModule(mib.content, mib.fileName);
+          return parseWithCache(mib);
         } catch (error) {
           console.error(`Failed to parse ${mib.fileName}:`, error);
           return null;
@@ -177,6 +218,7 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
 
       // If tree build completely failed (no modules remaining)
       if (!tree || modules.length === 0) {
+        publishState(allMibs, [], undefined);
         // Persist the error info collected above
         await saveMibs(Array.from(dirtyMibs));
         await clearMergedTree();
@@ -186,9 +228,9 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       // Step 4: Flatten tree
       const flatTree = flattenTree(tree);
 
-      // Step 5: Save merged tree once, together with the TEXTUAL-CONVENTIONs
-      // collected while parsing (including from files excluded from the build,
-      // so a type defined in a file with a missing dependency still resolves)
+      // Step 5: Collect the TEXTUAL-CONVENTIONs seen while parsing, including
+      // from files excluded from the build, so a type defined in a file with a
+      // missing dependency still resolves in the details panel
       const collectedTcs: TextualConvention[] = [];
       const seenTcNames = new Set<string>();
       for (const module of allModules) {
@@ -199,8 +241,6 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
           }
         }
       }
-
-      await saveMergedTree(tree, collectedTcs);
 
       // Calculate nodeCount for each MIB (nodes belonging to that MIB)
       const nodeCountByFile = new Map<string, number>();
@@ -301,8 +341,14 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         dirtyMibs.add(mib);
       }
 
-      // Write every changed MIB record in a single transaction
-      await saveMibs(Array.from(dirtyMibs));
+      // Everything the UI needs is ready - show it, then persist
+      publishState(allMibs, tree, collectedTcs);
+
+      // Different stores, so the two transactions can run concurrently
+      await Promise.all([
+        saveMergedTree(tree, collectedTcs),
+        saveMibs(Array.from(dirtyMibs)),
+      ]);
 
       // Notify if there are error files
       if (errorFiles.size > 0 && onNotification) {
@@ -316,7 +362,7 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       console.error('Failed to rebuild trees:', error);
       throw error;
     }
-  }, [onNotification]);
+  }, [onNotification, parseWithCache, publishState]);
 
   // Upload MIB file (using 3-pass approach)
   const uploadMib = useCallback(async (file: File, _forceUpload = false, skipReload = false): Promise<UploadResult> => {
@@ -354,11 +400,15 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
 
       await saveMib(mibData);
 
+      // The file was just parsed for its module name; hand that result to the
+      // rebuild instead of letting it parse the same content again
+      parseCacheRef.current.set(mibData.id, { content, module: parsedModule });
+
       // Rebuild all MIBs (only if skipReload is false)
       if (!skipReload) {
         try {
+          // rebuildAllTrees publishes the new tree and MIB list itself
           await rebuildAllTrees();
-          await loadData();
         } catch (error) {
           // If error in rebuildAllTrees (e.g., missing MIBs)
           // rebuildAllTrees already saved error info to affected files
@@ -385,15 +435,17 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       const remainingCount = await countMibs();
       if (remainingCount > 0) {
         try {
+          // rebuildAllTrees publishes the new tree and MIB list itself
           await rebuildAllTrees();
         } catch {
-          // Ignore tree build errors (e.g., missing MIBs)
+          // Tree build failed (e.g., missing MIBs) - fall back to a full reload
+          await loadData();
         }
       } else {
         // Clear tree if no MIBs remain
         await clearMergedTree();
+        await loadData();
       }
-      await loadData();
     } catch (error) {
       console.error('Failed to delete MIB:', error);
     }
@@ -407,15 +459,17 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       const remainingCount = await countMibs();
       if (remainingCount > 0) {
         try {
+          // rebuildAllTrees publishes the new tree and MIB list itself
           await rebuildAllTrees();
         } catch {
-          // Ignore tree build errors (e.g., missing MIBs)
+          // Tree build failed (e.g., missing MIBs) - fall back to a full reload
+          await loadData();
         }
       } else {
         // Clear tree if no MIBs remain
         await clearMergedTree();
+        await loadData();
       }
-      await loadData();
     } catch (error) {
       console.error('Failed to delete MIBs:', error);
     }
@@ -500,11 +554,14 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
 
       await saveMib(mibData);
 
+      // Reuse the parse the upload already did (see uploadMib)
+      parseCacheRef.current.set(mibData.id, { content, module: parsedModule });
+
       // Rebuild all MIBs
       if (!skipReload) {
         try {
+          // rebuildAllTrees publishes the new tree and MIB list itself
           await rebuildAllTrees();
-          await loadData();
         } catch (error) {
           // rebuildAllTrees already saved error info to affected files
           await loadData();
@@ -536,8 +593,8 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
   // Rebuild tree from all MIBs
   const rebuildTree = useCallback(async (): Promise<void> => {
     try {
+      // rebuildAllTrees publishes the new tree and MIB list itself
       await rebuildAllTrees();
-      await loadData();
     } catch (error) {
       console.error('Failed to rebuild tree:', error);
       await loadData(); // Reload to show any error states

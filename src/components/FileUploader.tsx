@@ -36,9 +36,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
     const result = await onUploadFromText(content, fileName);
 
     if (result.success) {
-      if (onReload) {
-        await onReload();
-      }
+      // The rebuild triggered by the upload already published the new state
       toast.success('MIB added successfully from text');
     } else {
       // Add failure to notification panel
@@ -48,7 +46,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
     }
 
     return result;
-  }, [onUploadFromText, onReload, onNotification]);
+  }, [onUploadFromText, onNotification]);
 
   const processUpload = useCallback(async (file: File, skipReload = false, fileIndex: number, totalFiles: number) => {
     // Update progress
@@ -187,8 +185,10 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
 
       const allResults = await processFiles(fileArray);
 
-      // Execute reload
-      if (onReload) {
+      // A successful batch ends in a rebuild, which publishes the new tree and
+      // MIB list on its own. A failure can end the batch before that happens,
+      // leaving earlier files stored but not shown, so reload in that case.
+      if (onReload && allResults.some(({ result }) => !result.success)) {
         await onReload();
       }
 
@@ -231,8 +231,10 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
 
       const allResults = await processFiles(fileArray);
 
-      // Execute reload
-      if (onReload) {
+      // A successful batch ends in a rebuild, which publishes the new tree and
+      // MIB list on its own. A failure can end the batch before that happens,
+      // leaving earlier files stored but not shown, so reload in that case.
+      if (onReload && allResults.some(({ result }) => !result.success)) {
         await onReload();
       }
 

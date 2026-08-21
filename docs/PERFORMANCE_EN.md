@@ -89,6 +89,26 @@ Reference points, not guarantees. Synthetic corpus, Chromium, warm cache.
 | `flattenTree` | ~3 ms |
 | `filterTreeByQuery` | ~15–20 ms |
 
+**80 files / 5.4 MB / 16k nodes**, in-browser rebuild paths:
+
+| Action | Time |
+|---|---|
+| Bulk upload of 79 files (nothing cached) | ~780 ms |
+| Adding one more file to those 79 | ~195 ms |
+| Rebuild Tree with nothing changed | ~185 ms |
+| Deleting one file | ~410 ms |
+
+Where a rebuild's time goes at that size — worth knowing before optimizing it,
+because the storage half is bigger than it looks:
+
+| Stage | Time |
+|---|---|
+| Read every stored MIB (`getAll`) | ~38 ms |
+| Parse all files | ~185 ms |
+| Build the tree | ~55 ms |
+| **Write the merged tree** | **~176 ms** |
+| Read the tree back | ~34 ms |
+
 **60 files / ~12k nodes**, in-browser interactions:
 
 | Action | Time |
@@ -102,8 +122,10 @@ Reference points, not guarantees. Synthetic corpus, Chromium, warm cache.
 ~17 ms, i.e. no visible stall. That is the number to watch for selection: a
 regression here shows up as a gap of several frames, not as a slower average.
 
-Parsing now dominates the rebuild. That is expected: it is the only stage that
-has to touch every byte of every file.
+Parsing is the largest single CPU cost, but it is not the majority of a rebuild:
+persisting the tree is comparable, and the reads on either side add more. Any
+plan to make rebuilds cheaper has to account for the write, which no amount of
+incremental parsing or building removes.
 
 ---
 
@@ -194,6 +216,20 @@ almost never applies.
 **Full-tree search per breadcrumb segment.** `OidBreadcrumb` searched the entire
 tree for each OID in the path; it descends the path once instead.
 
+**Every rebuild re-parsed every file.** Only the file that changed can have a
+different body, so parsed modules are now kept in a session-scoped cache keyed
+by MIB id, reused when the content is identical. The cache is deliberately *not*
+persisted: a page reload does not rebuild — it renders the stored tree — so
+persisting it would buy nothing and cost a serialization round trip. Uploading
+also seeds the cache with the parse it already did to read the module name, so
+a file is no longer parsed twice on the way in.
+
+**The UI waited for the tree to be written.** A rebuild persisted the tree, then
+re-read it (and every MIB record) to put it into React state. The state is now
+published from what the rebuild already has in memory, before the writes, and
+the two writes run concurrently. The redundant read after a rebuild is gone.
+*Adding one file to 79: 644 → 195 ms.*
+
 ---
 
 ## Invariants worth keeping
@@ -216,6 +252,10 @@ Things that are load-bearing and not obvious from the code alone:
   accumulate across a build, so every build needs a fresh instance — this is
   why the retry loop in `rebuildAllTrees` constructs one each time round. The
   `ParsedModule[]` itself is not modified and can be reused.
+- **A rebuild publishes state before it persists.** The React state is set from
+  what the rebuild holds in memory; the IndexedDB writes follow. Anything that
+  reads the tree back to populate state would put the write back on the
+  critical path.
 - **The keyword guards in the parser must stay case-insensitive.** The block
   patterns are `/i`; a guard using `indexOf` on an uppercase literal would skip
   lower-case definitions.
@@ -226,17 +266,17 @@ Things that are load-bearing and not obvious from the code alone:
 
 ## Known remaining costs
 
-- **Every mutation rebuilds everything.** Adding one file re-parses and rebuilds
-  the entire collection. This is the dominant cost and the real ceiling on
-  collection size — see
-  [INCREMENTAL_UPDATE_PROPOSAL_EN.md](./INCREMENTAL_UPDATE_PROPOSAL_EN.md).
+- **Every mutation still rebuilds the whole tree.** The parse cache means only
+  the changed file is re-parsed, but the tree is rebuilt from scratch and
+  rewritten whole. See
+  [INCREMENTAL_UPDATE_PROPOSAL_EN.md](./INCREMENTAL_UPDATE_PROPOSAL_EN.md),
+  including the reassessment of what that would actually be worth.
+- **The merged tree is written as one record.** ~176 ms at 16k nodes, and it
+  scales with the tree. This is a floor under every rebuild no matter how
+  incremental the parsing and building become.
 - **Parsing is single-threaded on the main thread.** A large corpus blocks the
   UI for the duration. Moving parsing into a worker would keep the app
   responsive even without incremental updates.
-- **The merged tree is written to IndexedDB whole.** A structured clone of the
-  entire tree on every rebuild.
-- **Each file is parsed twice on upload** — once for its module name, once
-  during the rebuild. Harmless for a few files, wasteful for hundreds.
 - **The row model covers every visible row, not just the rendered window.**
   `flattenVisibleRows` has to walk all expanded branches to know the list's
   height, so with Expand All on a large tree each rebuild allocates one row

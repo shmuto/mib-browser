@@ -71,7 +71,7 @@ management library — component state plus one hook is enough at this size.
 
 | File | Responsibility |
 |---|---|
-| `useMibStorage.ts` | The single source of truth for stored MIBs and the merged tree. Owns upload, delete, import/export, and `rebuildAllTrees`. |
+| `useMibStorage.ts` | The single source of truth for stored MIBs and the merged tree. Owns upload, delete, import/export, and `rebuildAllTrees`, plus the session-scoped cache of parsed modules. |
 
 ### `src/components`
 
@@ -116,9 +116,9 @@ useMibStorage.uploadMib(file)
    └─ (last file only) rebuildAllTrees() ─▶ loadData()
 ```
 
-Uploading n files therefore parses each file twice — once on the way in for its
-module name, once during the single rebuild — but builds the tree only **once**,
-not n times.
+The tree is built **once** per batch, not once per file. The parse done on the
+way in (to read the module name) is handed to the rebuild through the parse
+cache, so a file is parsed once overall.
 
 ### Rebuilding the merged tree
 
@@ -128,7 +128,9 @@ delete, JSON import, and the manual **Rebuild Tree** button.
 ```
 getAllMibs()                    read every stored MIB
    ▼
-parseMibModule() per file       → ParsedModule[]
+parse each file                 → ParsedModule[]
+   │                              unchanged files come from the session
+   │                              parse cache; only changed ones are parsed
    ▼
 new MibTreeBuilder().buildTree(modules)
    │
@@ -136,16 +138,20 @@ new MibTreeBuilder().buildTree(modules)
    │     → mark every module importing X as failed, drop them, retry
    │       (up to 10 times, stopping if the missing set stops changing)
    ▼
-saveMergedTree(tree)            one record, structured-cloned into IndexedDB
-   ▼
 per-file bookkeeping            node counts, conflicts, error text
    ▼
-saveMibs(changed)               one transaction for all of them
+publish to React state          the UI updates here, from memory
+   ▼
+saveMergedTree + saveMibs       concurrently, off the critical path
 ```
 
-Then `loadData()` reads the MIB list and the merged tree back and puts both into
-React state. The tree the UI renders is always the persisted one, so a reload
-shows the same tree without rebuilding.
+The state is published from what the rebuild already holds, so nothing reads
+back what was just written. Writing the merged tree is the slowest step of a
+rebuild and nothing on screen depends on it having finished — it only matters
+for the next page load, where the stored tree is rendered without rebuilding.
+
+`loadData()` — the full read from IndexedDB — now runs on startup, after a
+failed rebuild, and after operations that do not rebuild (import, clear).
 
 ### Rendering
 

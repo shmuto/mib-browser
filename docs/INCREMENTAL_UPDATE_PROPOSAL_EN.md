@@ -45,6 +45,90 @@ the UI is frozen.
 
 ---
 
+## Reassessment
+
+Written after measuring the rebuild and implementing the cheap parts of this
+proposal. The diagnosis below still holds — a rebuild costs what the whole
+collection costs — but three of the assumptions do not.
+
+### Parsing is not the majority of a rebuild
+
+The effect estimates in this document count parse time only. Measured at
+80 files / 5.4 MB / 16k nodes:
+
+| Stage | Time |
+|---|---|
+| Read every stored MIB | ~38 ms |
+| Parse all files | ~185 ms |
+| Build the tree | ~55 ms |
+| **Write the merged tree** | **~176 ms** |
+| Read the tree back | ~34 ms |
+
+Parsing is about 30% of an upload, not the bulk. Any estimate that ignores the
+write and the reads is optimistic by roughly a factor of three.
+
+### The write is a floor under every phase
+
+The merged tree is stored as a single record, so persisting it costs ~176 ms at
+16k nodes and scales with the tree. Incremental parsing and incremental building
+do not touch that number. The "90-95% speedup" of the full incremental approach
+is not reachable while the tree is rewritten whole — reaching it would mean
+splitting the tree across records or not persisting on every change, neither of
+which this document considers.
+
+### Approach 1 cannot run against the stored tree
+
+The pseudocode reads `child.parentName`, `c.subid` and `findOrphanNodes(existingTree)`.
+None of those exist in the persisted data:
+
+```
+keys on a stored MibNode: access, children, description, fileName,
+                          isExpanded, mibName, name, oid, parent, status, syntax, type
+has subid?       false
+has parentName?  false
+orphan node present in tree?  false
+```
+
+`convertToMibNode()` drops everything the builder used to resolve parents, and
+orphans are never linked into the tree at all. Differential updates would need
+the tree persisted in builder shape (`TreeBuildNode`) or the builder kept alive
+in memory. Persisting the larger shape makes the write — already the biggest
+single cost — bigger.
+
+### The cache should not be persisted
+
+Phase 1 specifies persisting the parse cache to IndexedDB. A page reload does
+not rebuild: it renders the stored tree. So the cache is only ever read within
+the session that filled it, and persisting it adds a serialization round trip
+for no benefit. A plain in-memory `Map` is simpler and strictly faster.
+
+### What was done instead
+
+The two cheap items, which needed no change to the data model:
+
+- **Session-scoped parse cache**, keyed by MIB id, reused when the content is
+  unchanged. Uploading also seeds it with the parse done to read the module
+  name, so a file is parsed once rather than twice.
+- **Publish React state before persisting**, and stop reading back what was just
+  written.
+
+Measured at 80 files / 16k nodes: adding one file to an existing collection
+644 → 195 ms, Rebuild Tree 540 → 185 ms, bulk upload of 79 files 1207 → 784 ms,
+deleting one file 680 → 413 ms.
+
+### What is worth doing next
+
+1. **Move parsing and building into a Web Worker.** This document lists workers
+   under "parallelize tree building", but the value is not parallelism — it is
+   that a rebuild stops blocking the UI. That addresses the actual complaint
+   (the app freezes) more directly than making the number smaller.
+2. **Then re-measure.** With parsing cached and the UI unblocked, the remaining
+   cost may not justify the correctness risk of incremental tree updates, where
+   the failure modes — a wrong OID, a node that quietly stops appearing — are
+   invisible until they matter.
+
+---
+
 ## Incremental Update Implementation Strategy
 
 ### Approach 1: Differential Updates (Recommended)
@@ -498,10 +582,8 @@ const rebuildAllTrees = useCallback(async (): Promise<void> => {
 3. **Long-term**: Full incremental updates for 90-95% speedup (complex)
 
 ### Recommendation
-**Start with Phase 1 (Cache Optimization)** - most practical approach:
-- Simple implementation (2-3 hours)
-- Low risk
-- High effect (30-70% speedup)
-- Minimal changes to existing logic
 
-Only proceed to Phase 2 if Phase 1 is insufficient.
+Superseded by the [Reassessment](#reassessment) above. The cache half of Phase 1
+is implemented (in memory, not persisted); the next step is a Web Worker rather
+than Phase 2, and the differential design needs reworking against the actual
+persisted data model before it could be built at all.
