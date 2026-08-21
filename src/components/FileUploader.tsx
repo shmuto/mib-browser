@@ -270,10 +270,11 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
       onDrop={uploadProgress.isUploading ? undefined : handleDrop}
       onClick={uploadProgress.isUploading ? undefined : handleButtonClick}
     >
+      {/* No accept filter: MIB files come with every extension and none at all,
+          and the content is validated on upload anyway */}
       <input
         ref={fileInputRef}
         type="file"
-        accept=".txt,.mib"
         multiple
         className="hidden"
         onChange={handleFileSelect}
@@ -316,7 +317,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
           </p>
           <div className="flex items-center justify-center gap-2 text-xs text-gray-400">
             <FileText size={16} />
-            <span>Supports .txt, .mib files</span>
+            <span>Any file containing a MIB module</span>
           </div>
         </>
       )}
