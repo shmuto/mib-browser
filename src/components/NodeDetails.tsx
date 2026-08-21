@@ -41,11 +41,24 @@ interface NodeDetailsProps {
   mibs: StoredMibData[];
   onViewMib?: (mib: StoredMibData) => void;
   tree: MibNode[];
+  /** Collected during the tree rebuild. Undefined for trees stored before they were persisted. */
+  textualConventions?: TextualConvention[];
 }
 
-export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree }: NodeDetailsProps) {
+export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree, textualConventions }: NodeDetailsProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const tcIndexRef = useRef<TcIndex | null>(null);
+
+  // Index the TEXTUAL-CONVENTIONs that came with the tree
+  const storedTcIndex = useMemo(() => {
+    if (!textualConventions) return null;
+
+    const byName = new Map<string, TextualConvention>();
+    for (const tc of textualConventions) {
+      if (!byName.has(tc.name)) byName.set(tc.name, tc);
+    }
+    return byName;
+  }, [textualConventions]);
 
   // Look up the TEXTUAL-CONVENTION matching this node's syntax
   // Must be called before any conditional returns (React hooks rule)
@@ -55,13 +68,18 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree 
     // Extract the type name from syntax (e.g., "DisplayString" from "DisplayString (SIZE (0..255))")
     const syntaxTypeName = node.syntax.split(/\s*\(/)[0].trim();
 
-    // Rebuild the index only when the MIB list itself changed
+    if (storedTcIndex) {
+      return storedTcIndex.get(syntaxTypeName) || null;
+    }
+
+    // Fallback for a tree stored before TEXTUAL-CONVENTIONs were persisted:
+    // parse the stored MIBs once, and only when a lookup is actually needed.
     if (!tcIndexRef.current || tcIndexRef.current.mibs !== mibs) {
       tcIndexRef.current = buildTcIndex(mibs);
     }
 
     return tcIndexRef.current.byName.get(syntaxTypeName) || null;
-  }, [node?.syntax, mibs]);
+  }, [node?.syntax, mibs, storedTcIndex]);
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {

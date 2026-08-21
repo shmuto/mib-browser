@@ -83,7 +83,7 @@ management library — component state plus one hook is enough at this size.
 | `TreeNode` | One row of the tree. Presentational and memoized. |
 | `TreeExpandControls` | Expand all / collapse all / compact view toggle. |
 | `SearchBar` | Query input and result count. |
-| `NodeDetails` | The selected node: OID, notation, source file, syntax, TEXTUAL-CONVENTION values, description, children. |
+| `NodeDetails` | The selected node: OID, notation, source file, syntax, TEXTUAL-CONVENTION values (looked up in the index stored with the tree), description, children. |
 | `OidBreadcrumb` | The iso → org → dod → … path above the node details, each segment clickable. |
 | `ConflictNotificationPanel` | Banner listing files that define the same module differently, with a diff dialog. |
 | `NotificationPanel` | Persistent warnings and errors (missing dependencies, failed uploads). Exports the `useNotifications` hook. |
@@ -205,7 +205,9 @@ user navigates to an intermediate node from the breadcrumb.
 
 **Expansion** is a `Set<string>` of OIDs held by `App`. Collapsing removes the
 OID *and every descendant OID* in one update, found by string prefix — there is
-no walk of the subtree.
+no walk of the subtree. Selecting a node expands the path to it, but the `Set`
+keeps its identity when that path is already open: it is an input to the row
+model, so replacing it rebuilds every row.
 
 **Search** filters the tree rather than just highlighting: `filterTreeByQuery`
 keeps nodes that match on name, OID or description, plus their ancestors. It
@@ -225,7 +227,7 @@ another tab requests a version change.
 | Store | Key | Contents |
 |---|---|---|
 | `mibs` | `id` | One `StoredMibData` per file: original text, size, timestamps, module name, node count, and any conflicts or dependency errors. Indexes: `fileName`, `uploadedAt`. |
-| `mergedTree` | `id` | A single record `{ id: 'merged-tree', tree }` holding the whole built tree. |
+| `mergedTree` | `id` | A single record `{ id: 'merged-tree', tree, textualConventions }` holding the whole built tree, plus the TEXTUAL-CONVENTIONs collected while parsing. The rebuild has already parsed every module, so storing them saves the details panel from re-parsing every MIB to resolve a node's SYNTAX. Trees stored before this field existed simply lack it, and the details panel falls back to parsing on demand. |
 
 Storing the original text of every file is deliberate: a rebuild needs to
 re-parse everything, and the raw MIB is what the content viewer shows.

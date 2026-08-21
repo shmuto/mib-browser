@@ -1,4 +1,4 @@
-import type { StoredMibData, MibNode } from '../types/mib';
+import type { StoredMibData, MibNode, TextualConvention } from '../types/mib';
 
 const DB_NAME = 'mib-browser-db';
 const DB_VERSION = 2;
@@ -248,20 +248,32 @@ export async function migrateFromLocalStorage(): Promise<number> {
 // Save merged tree (single instance)
 const TREE_KEY = 'merged-tree';
 
-export async function saveMergedTree(tree: MibNode[]): Promise<void> {
+// The TEXTUAL-CONVENTIONs are stored alongside the tree because the rebuild has
+// already parsed every module and therefore has them in hand. Without this the
+// node details panel would have to re-parse every stored MIB to resolve a
+// node's SYNTAX.
+export async function saveMergedTree(
+  tree: MibNode[],
+  textualConventions: TextualConvention[] = []
+): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(TREE_STORE_NAME, 'readwrite');
     const store = transaction.objectStore(TREE_STORE_NAME);
-    const request = store.put({ id: TREE_KEY, tree });
+    const request = store.put({ id: TREE_KEY, tree, textualConventions });
 
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
 }
 
-// Load merged tree
-export async function loadMergedTree(): Promise<MibNode[]> {
+// Load merged tree.
+// `textualConventions` is undefined for trees stored before they were persisted,
+// which the caller treats as "not available" rather than "none".
+export async function loadMergedTree(): Promise<{
+  tree: MibNode[];
+  textualConventions?: TextualConvention[];
+}> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(TREE_STORE_NAME, 'readonly');
@@ -270,7 +282,10 @@ export async function loadMergedTree(): Promise<MibNode[]> {
 
     request.onsuccess = () => {
       const result = request.result;
-      resolve(result?.tree || []);
+      resolve({
+        tree: result?.tree || [],
+        textualConventions: result?.textualConventions,
+      });
     };
     request.onerror = () => reject(request.error);
   });

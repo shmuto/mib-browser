@@ -33,6 +33,7 @@ export default function App() {
   const {
     mibs,
     mergedTree,
+    textualConventions,
     storageInfo,
     loading,
     uploadMib,
@@ -179,16 +180,33 @@ export default function App() {
     });
   }, []);
 
-  // Auto-expand tree to show selected node
+  // Auto-expand tree to show selected node.
+  // Returns the previous Set unchanged when the path is already expanded -
+  // handing back a new Set would invalidate the tree view's row model and make
+  // every click rebuild it, which is most of a frame once the tree is large.
   useEffect(() => {
-    if (selectedNode) {
-      const pathOids = getOidPath(selectedNode.oid);
-      setExpandedOids(prev => {
-        const newSet = new Set(prev);
-        pathOids.forEach(oid => newSet.add(oid));
-        return newSet;
-      });
-    }
+    if (!selectedNode) return;
+
+    const pathOids = getOidPath(selectedNode.oid);
+
+    // Expanding the node itself only means something when it has children;
+    // for a leaf it would add an OID that nothing ever reads, while still
+    // invalidating the row model. Leaves are most of what gets clicked.
+    const lastIndex = selectedNode.children.length > 0 ? pathOids.length : pathOids.length - 1;
+
+    setExpandedOids(prev => {
+      let next: Set<string> | null = null;
+
+      for (let i = 0; i < lastIndex; i++) {
+        const oid = pathOids[i];
+        if (!prev.has(oid)) {
+          if (!next) next = new Set(prev);
+          next.add(oid);
+        }
+      }
+
+      return next ?? prev;
+    });
   }, [selectedNode]);
 
   if (loading) {
@@ -314,7 +332,14 @@ export default function App() {
               <div className="p-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-800">Node Details</h2>
               </div>
-              <NodeDetails node={selectedNode} onSelectNode={setSelectedNode} mibs={mibs} onViewMib={setViewingMib} tree={mergedTree} />
+              <NodeDetails
+                node={selectedNode}
+                onSelectNode={setSelectedNode}
+                mibs={mibs}
+                onViewMib={setViewingMib}
+                tree={mergedTree}
+                textualConventions={textualConventions}
+              />
             </aside>
           }
             />

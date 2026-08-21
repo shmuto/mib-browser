@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import type { StoredMibData, StorageInfo, UploadResult, MibConflict, MibNode } from '../types/mib';
+import type { StoredMibData, StorageInfo, UploadResult, MibConflict, MibNode, TextualConvention } from '../types/mib';
 import {
   getAllMibs,
   getMibByFileName,
@@ -32,6 +32,8 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
   const { onNotification } = options;
   const [mibs, setMibs] = useState<StoredMibData[]>([]);
   const [mergedTree, setMergedTree] = useState<MibNode[]>([]);
+  // undefined = not stored with this tree (built before they were persisted)
+  const [textualConventions, setTextualConventions] = useState<TextualConvention[] | undefined>(undefined);
   const [storageInfo, setStorageInfo] = useState<StorageInfo>({
     used: 0,
     available: 0,
@@ -72,8 +74,9 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       setMibs(loadedMibs);
 
       // Load merged tree
-      const tree = await loadMergedTree();
+      const { tree, textualConventions: storedTcs } = await loadMergedTree();
       setMergedTree(tree);
+      setTextualConventions(storedTcs);
 
       // Get storage info (reuse the MIBs already read above)
       const info = await getStorageInfo(loadedMibs);
@@ -183,8 +186,21 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       // Step 4: Flatten tree
       const flatTree = flattenTree(tree);
 
-      // Step 5: Save merged tree once
-      await saveMergedTree(tree);
+      // Step 5: Save merged tree once, together with the TEXTUAL-CONVENTIONs
+      // collected while parsing (including from files excluded from the build,
+      // so a type defined in a file with a missing dependency still resolves)
+      const collectedTcs: TextualConvention[] = [];
+      const seenTcNames = new Set<string>();
+      for (const module of allModules) {
+        for (const tc of module.textualConventions ?? []) {
+          if (!seenTcNames.has(tc.name)) {
+            seenTcNames.add(tc.name);
+            collectedTcs.push(tc);
+          }
+        }
+      }
+
+      await saveMergedTree(tree, collectedTcs);
 
       // Calculate nodeCount for each MIB (nodes belonging to that MIB)
       const nodeCountByFile = new Map<string, number>();
@@ -532,6 +548,7 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
   return {
     mibs,
     mergedTree,
+    textualConventions,
     storageInfo,
     loading,
     uploadMib,

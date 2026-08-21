@@ -33,7 +33,10 @@ function TreeNode({
   onSelect,
   onToggleExpand,
 }: TreeNodeProps) {
-  const lastClickTime = useRef<number>(0);
+  // Rows are recycled by position, so the OID of the last click is tracked
+  // alongside its timestamp: without it, two quick clicks on a row whose node
+  // changed in between would be read as a double-click on the second node.
+  const lastClick = useRef<{ oid: string; time: number }>({ oid: '', time: 0 });
 
   const handleToggle = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -42,15 +45,16 @@ function TreeNode({
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     const now = Date.now();
-    const timeSinceLastClick = now - lastClickTime.current;
+    const previous = lastClick.current;
+    const isSecondClick = previous.oid === node.oid && now - previous.time < 250;
 
-    // Double-click detected (within 250ms)
-    if (timeSinceLastClick < 250 && hasChildren) {
-      lastClickTime.current = 0; // Reset
+    // Double-click detected (same node, within 250ms)
+    if (isSecondClick && hasChildren) {
+      lastClick.current = { oid: '', time: 0 }; // Reset
       handleToggle(e);
     } else {
       // Single click - select node
-      lastClickTime.current = now;
+      lastClick.current = { oid: node.oid, time: now };
       onSelect(node);
     }
   }, [node, onSelect, hasChildren, handleToggle]);
