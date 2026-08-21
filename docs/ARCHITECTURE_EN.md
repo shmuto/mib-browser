@@ -41,13 +41,17 @@ own browser and is theirs to clear.
 └───────────────────────────────────────────────────────────┘
               │                              │
               ▼                              ▼
-┌──────────────────────────┐   ┌──────────────────────────────┐
-│  Parsing / tree building │   │  Persistence                 │
-│  mib-parser.ts           │   │  indexeddb.ts                │
-│  mib-tree-builder.ts     │   │  (IndexedDB: mib-browser-db) │
-│  oid-utils.ts            │   │                              │
-└──────────────────────────┘   └──────────────────────────────┘
+┌──────────────────────────────┐   ┌──────────────────────────┐
+│  rebuild worker              │   │  Persistence             │
+│  parse · build · write tree  │   │  indexeddb.ts            │
+│  mib-parser · mib-tree-      │   │  mib-browser-db          │
+│  builder · rebuild.ts        │◀─▶│  (both threads use it)   │
+└──────────────────────────────┘   └──────────────────────────┘
 ```
+
+The heavy work — parsing every MIB, merging them into a tree, and writing that
+tree — runs in a Web Worker, so adding or removing a file does not freeze the
+UI. If a worker cannot be created the same pipeline runs inline instead.
 
 Stack: React 18 + TypeScript, Vite, Tailwind CSS, `lucide-react` /
 `react-icons` for icons, `react-hot-toast` for transient messages. No state
@@ -63,9 +67,17 @@ management library — component state plus one hook is enough at this size.
 |---|---|
 | `mib-parser.ts` | Turn MIB text into a `ParsedModule` (IMPORTS, objects with unresolved parent names, TEXTUAL-CONVENTIONs). Also `validateMibContent`, `filterTreeByQuery`, `flattenTree`, `countTreeNodes`. |
 | `mib-tree-builder.ts` | Merge many `ParsedModule`s into one OID tree (`MibTreeBuilder`, 3-pass). |
+| `rebuild.ts` | The whole rebuild pipeline as one plain function: parse (with a session cache), build, per-file bookkeeping, persist the tree. Runs in the worker, or inline if there is none. |
+| `rebuild-client.ts` | Main-thread side of the worker: request/response plumbing, tracking which file contents the worker already has, and the no-worker fallback. |
 | `oid-utils.ts` | OID string handling: parse, compare, ancestry, `getOidPath`, name maps. |
 | `indexeddb.ts` | All IndexedDB access. Nothing else touches the database. |
 | `storage.ts` | Small helpers: `generateId`, `sanitizeFileName`, `formatFileSize`, `isValidStoredMibData`. |
+
+### `src/workers`
+
+| File | Responsibility |
+|---|---|
+| `rebuild.worker.ts` | Runs `rebuild.ts` off the main thread. Posts the finished tree back, then persists it and posts again. |
 
 ### `src/hooks`
 
@@ -126,29 +138,36 @@ cache, so a file is parsed once overall.
 delete, JSON import, and the manual **Rebuild Tree** button.
 
 ```
-getAllMibs()                    read every stored MIB
-   ▼
-parse each file                 → ParsedModule[]
-   │                              unchanged files come from the session
-   │                              parse cache; only changed ones are parsed
-   ▼
-new MibTreeBuilder().buildTree(modules)
-   │
-   ├─ throws "Missing MIB dependencies: X"
-   │     → mark every module importing X as failed, drop them, retry
-   │       (up to 10 times, stopping if the missing set stops changing)
-   ▼
-per-file bookkeeping            node counts, conflicts, error text
-   ▼
-publish to React state          the UI updates here, from memory
-   ▼
-saveMergedTree + saveMibs       concurrently, off the critical path
+main thread                          rebuild worker
+───────────                          ──────────────
+getAllMibs()
+   │  post { mibs }, content only
+   │  for files the worker lacks
+   └──────────────────────────────▶  parse each file
+                                     (cached parses reused)
+                                        ▼
+                                     MibTreeBuilder.buildTree()
+                                        │
+                                        ├─ "Missing MIB dependencies: X"
+                                        │    → drop every module importing X,
+                                        │      record the error, retry
+                                        │      (up to 10 times)
+                                        ▼
+                                     per-file bookkeeping
+                                     node counts, conflicts, errors
+   ┌──────────────────────────────◀  post { tree, tcs, files }
+   ▼                                    ▼
+apply bookkeeping to records         saveMergedTree()
+publish to React state  ← UI here       ▼
+   ▼                                 post { persisted }
+saveMibs(changed)      ◀────────────────┘
 ```
 
-The state is published from what the rebuild already holds, so nothing reads
-back what was just written. Writing the merged tree is the slowest step of a
-rebuild and nothing on screen depends on it having finished — it only matters
-for the next page load, where the stored tree is rendered without rebuilding.
+The tree is posted back before it is written, so the UI renders it while the
+worker is still persisting. Nothing reads back what was just written.
+
+Only the contents of files the worker has not already parsed are sent — posting
+all of them costs about as much as parsing them, which would defeat the point.
 
 `loadData()` — the full read from IndexedDB — now runs on startup, after a
 failed rebuild, and after operations that do not rebuild (import, clear).
@@ -233,7 +252,7 @@ another tab requests a version change.
 | Store | Key | Contents |
 |---|---|---|
 | `mibs` | `id` | One `StoredMibData` per file: original text, size, timestamps, module name, node count, and any conflicts or dependency errors. Indexes: `fileName`, `uploadedAt`. |
-| `mergedTree` | `id` | A single record `{ id: 'merged-tree', tree, textualConventions }` holding the whole built tree, plus the TEXTUAL-CONVENTIONs collected while parsing. The rebuild has already parsed every module, so storing them saves the details panel from re-parsing every MIB to resolve a node's SYNTAX. Trees stored before this field existed simply lack it, and the details panel falls back to parsing on demand. |
+| `mergedTree` | `id` | A single record `{ id: 'merged-tree', tree, textualConventions }` holding the whole built tree, plus the TEXTUAL-CONVENTIONs collected while parsing. Written by the rebuild worker; the `mibs` store is written by the main thread. The rebuild has already parsed every module, so storing them saves the details panel from re-parsing every MIB to resolve a node's SYNTAX. Trees stored before this field existed simply lack it, and the details panel falls back to parsing on demand. |
 
 Storing the original text of every file is deliberate: a rebuild needs to
 re-parse everything, and the raw MIB is what the content viewer shows.

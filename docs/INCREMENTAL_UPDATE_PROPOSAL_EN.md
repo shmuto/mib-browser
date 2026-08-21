@@ -116,16 +116,27 @@ Measured at 80 files / 16k nodes: adding one file to an existing collection
 644 → 195 ms, Rebuild Tree 540 → 185 ms, bulk upload of 79 files 1207 → 784 ms,
 deleting one file 680 → 413 ms.
 
+- **The rebuild runs in a Web Worker.** This document lists workers under
+  "parallelize tree building", but the value is not parallelism — it is that a
+  rebuild stops blocking the UI. Parsing, building and the tree write all happen
+  off the main thread. Main-thread blocking during a rebuild: 249 → 89 ms for a
+  bulk upload, 309 → 105 ms for adding a file, 145 → 0 ms for Rebuild Tree.
+
+  Two details decide whether this is worth anything at all, because the naive
+  version is a net loss: the worker has to keep the parse cache (posting 5.4 MB
+  of MIB text costs ~95 ms of main-thread serialization, about what parsing it
+  costs), and it has to do the tree write (receiving the tree costs the main
+  thread ~76 ms, more than the ~55 ms build it took away).
+
 ### What is worth doing next
 
-1. **Move parsing and building into a Web Worker.** This document lists workers
-   under "parallelize tree building", but the value is not parallelism — it is
-   that a rebuild stops blocking the UI. That addresses the actual complaint
-   (the app freezes) more directly than making the number smaller.
-2. **Then re-measure.** With parsing cached and the UI unblocked, the remaining
-   cost may not justify the correctness risk of incremental tree updates, where
-   the failure modes — a wrong OID, a node that quietly stops appearing — are
-   invisible until they matter.
+**Re-measure before building anything else.** With parsing cached, the UI
+unblocked and the rebuild off the main thread, what is left on the main thread
+is ~90–105 ms, most of it deserializing the tree the worker sends back —
+which incremental updates would not remove. The remaining cost may not justify
+the correctness risk of incremental tree updates, where the failure modes — a
+wrong OID, a node that quietly stops appearing — are invisible until they
+matter.
 
 ---
 
@@ -583,7 +594,8 @@ const rebuildAllTrees = useCallback(async (): Promise<void> => {
 
 ### Recommendation
 
-Superseded by the [Reassessment](#reassessment) above. The cache half of Phase 1
-is implemented (in memory, not persisted); the next step is a Web Worker rather
-than Phase 2, and the differential design needs reworking against the actual
-persisted data model before it could be built at all.
+Superseded by the [Reassessment](#reassessment) above. Phase 1 is implemented —
+the cache in memory rather than persisted, and the worker for responsiveness
+rather than parallelism. Phase 2's differential design needs reworking against
+the actual persisted data model before it could be built at all, and should not
+be started without re-measuring first.
