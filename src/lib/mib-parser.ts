@@ -657,7 +657,8 @@ function parseObjectType(content: string, oidMap: Map<string, string>): FlatMibN
   // Resolve parent OID
   const parentOid = oidMap.get(parentName);
   if (!parentOid) {
-    console.warn(`Parent OID not found for ${parentName}`);
+    // Kept out of the format-string argument: it comes from the MIB text
+    console.warn('Parent OID not found for:', parentName);
     return null;
   }
 

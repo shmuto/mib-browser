@@ -331,7 +331,8 @@ export class MibTreeBuilder {
     // are removed on the way back up, so a single Set is reused instead of
     // copying it for every child (which was O(nodes x depth) allocations).
     if (visited.has(key)) {
-      console.error(`[Cycle Detected] ${key}`);
+      // Kept out of the format-string argument: it comes from the MIB text
+      console.error('[Cycle Detected]', key);
       return;
     }
 

@@ -295,6 +295,11 @@ Things that are load-bearing and not obvious from the code alone:
   what the rebuild holds in memory; the IndexedDB writes follow. Anything that
   reads the tree back to populate state would put the write back on the
   critical path.
+- **MIB-derived text never goes in a `console.*` format string.** The first
+  argument to `console.error`/`warn`/`log` is a format string, so a file named
+  `%s.mib` swallows the argument after it — the error object vanishes from the
+  log — and `%c` injects CSS into the browser console. Pass such values as their
+  own argument. CodeQL flags this as `js/tainted-format-string`.
 - **Regexes run over MIB text must be linear.** The content is a file the user
   supplied, so a pattern that backtracks quadratically is a way to hang the tab,
   and CodeQL flags it as `js/polynomial-redos`. Spell out the alternatives you

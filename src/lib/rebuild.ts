@@ -120,7 +120,10 @@ export async function runRebuild(
       allModules.push(module);
       moduleByFileName.set(mib.fileName, module);
     } catch (error) {
-      console.error(`Failed to parse ${mib.fileName}:`, error);
+      // The file name is passed as its own argument, not interpolated into
+      // the first one: console.* treats that as a format string, and the name
+      // comes from a file the user chose.
+      console.error('Failed to parse MIB file:', mib.fileName, error);
     }
   }
 
