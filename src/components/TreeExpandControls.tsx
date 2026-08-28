@@ -5,13 +5,17 @@ interface TreeExpandControlsProps {
   onCollapseAll: () => void;
   compactMode: boolean;
   onToggleCompactMode: () => void;
+  notificationsOnly: boolean;
+  onToggleNotificationsOnly: () => void;
 }
 
 export default function TreeExpandControls({
   onExpandAll,
   onCollapseAll,
   compactMode,
-  onToggleCompactMode
+  onToggleCompactMode,
+  notificationsOnly,
+  onToggleNotificationsOnly
 }: TreeExpandControlsProps) {
   return (
     <div className="flex items-center gap-2">
@@ -33,7 +37,7 @@ export default function TreeExpandControls({
         <span>Collapse All</span>
       </button>
 
-      <div className="ml-2 flex items-center gap-2">
+      <div className="ml-2 flex items-center gap-3">
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
@@ -42,6 +46,19 @@ export default function TreeExpandControls({
             className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
           />
           <span className="text-xs text-gray-700">Compact View</span>
+        </label>
+
+        <label
+          className="flex items-center gap-2 cursor-pointer"
+          title="Show only NOTIFICATION-TYPE nodes (traps and informs) and the branches leading to them"
+        >
+          <input
+            type="checkbox"
+            checked={notificationsOnly}
+            onChange={onToggleNotificationsOnly}
+            className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+          />
+          <span className="text-xs text-gray-700">Traps Only</span>
         </label>
       </div>
     </div>

@@ -65,7 +65,7 @@ management library — component state plus one hook is enough at this size.
 
 | File | Responsibility |
 |---|---|
-| `mib-parser.ts` | Turn MIB text into a `ParsedModule` (IMPORTS, objects with unresolved parent names, TEXTUAL-CONVENTIONs). Also `validateMibContent`, `filterTreeByQuery`, `flattenTree`, `countTreeNodes`. |
+| `mib-parser.ts` | Turn MIB text into a `ParsedModule` (IMPORTS, objects with unresolved parent names, TEXTUAL-CONVENTIONs). Also `validateMibContent`, `filterTreeByQuery`, `filterTreeToNotifications`, `flattenTree`, `countTreeNodes`. |
 | `mib-tree-builder.ts` | Merge many `ParsedModule`s into one OID tree (`MibTreeBuilder`, 3-pass). |
 | `rebuild.ts` | The whole rebuild pipeline as one plain function: parse (with a session cache), build, per-file bookkeeping, persist the tree. Runs in the worker, or inline if there is none. |
 | `rebuild-client.ts` | Main-thread side of the worker: request/response plumbing, tracking which file contents the worker already has, and the no-worker fallback. |
@@ -175,7 +175,11 @@ failed rebuild, and after operations that do not rebuild (import, clear).
 ### Rendering
 
 ```
-mergedTree ──▶ filterTreeByQuery(deferred query) ──▶ filteredTree
+mergedTree ──▶ filterTreeToNotifications(traps only) ──▶ typeFilteredTree
+                                                        │
+                            filterTreeByQuery(deferred query)
+                                                        ▼
+                                                   filteredTree
                                                         │
                                     expandedOids, compactMode
                                                         ▼
@@ -199,6 +203,7 @@ mergedTree ──▶ filterTreeByQuery(deferred query) ──▶ filteredTree
 | Search query | `App` | — |
 | Expanded OIDs | `App` (`Set<string>`) | — |
 | Compact view | `App` | `localStorage: mib-browser-compact-mode` |
+| Traps-only filter | `App` | `localStorage: mib-browser-notifications-only` |
 | Panel widths | `ResizablePanel` | `localStorage: mib-browser-sidebar-width`, `mib-browser-panel-width` |
 | Notifications | `useNotifications` in `App` | — |
 
@@ -238,6 +243,13 @@ model, so replacing it rebuilds every row.
 keeps nodes that match on name, OID or description, plus their ancestors. It
 runs against a `useDeferredValue` copy of the query, so typing stays responsive
 while a large tree is re-filtered at lower priority.
+
+**Traps only** is the same shape of filter, on node type instead of text:
+`filterTreeToNotifications` keeps `NOTIFICATION-TYPE` nodes and their ancestors.
+It is applied to `mergedTree` *before* the search, so searching while the filter
+is on searches the traps. What is left is only the branches leading to
+notifications, so `App` expands them automatically — otherwise every trap would
+still be several clicks deep.
 
 ---
 
