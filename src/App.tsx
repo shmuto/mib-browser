@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useDeferredValue } from 'react';
 import type { MibNode, StoredMibData } from './types/mib';
 import { useMibStorage } from './hooks/useMibStorage';
-import { filterTreeByQuery, countTreeNodes } from './lib/mib-parser';
+import { filterTreeByQuery, filterTreeToNotifications, isNotificationNode, countTreeNodes } from './lib/mib-parser';
 import { getOidPath } from './lib/oid-utils';
 import { sanitizeFileName } from './lib/storage';
 import toast, { Toaster } from 'react-hot-toast';
@@ -61,20 +61,42 @@ export default function App() {
     localStorage.setItem('mib-browser-compact-mode', String(compactMode));
   }, [compactMode]);
 
+  // Load the notifications-only filter from localStorage (default: off)
+  const [notificationsOnly, setNotificationsOnly] = useState(() => {
+    return localStorage.getItem('mib-browser-notifications-only') === 'true';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('mib-browser-notifications-only', String(notificationsOnly));
+  }, [notificationsOnly]);
+
   // Filtering a large tree is expensive, so it runs against a deferred copy of
   // the query: typing stays responsive and React re-filters at low priority.
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
+  // "Traps only" filtering - keep NOTIFICATION-TYPE nodes and their ancestors.
+  // Applied before the search so the two compose: searching while the filter is
+  // on searches the notifications.
+  const typeFilteredTree = useMemo(() => {
+    return notificationsOnly ? filterTreeToNotifications(mergedTree) : mergedTree;
+  }, [mergedTree, notificationsOnly]);
+
   // Search filtering - show only matching nodes and their ancestors
   const filteredTree = useMemo(() => {
-    return filterTreeByQuery(mergedTree, deferredSearchQuery);
-  }, [mergedTree, deferredSearchQuery]);
+    return filterTreeByQuery(typeFilteredTree, deferredSearchQuery);
+  }, [typeFilteredTree, deferredSearchQuery]);
 
   // Count total nodes in filtered tree
   const searchResultCount = useMemo(() => {
     if (!deferredSearchQuery) return undefined;
     return countTreeNodes(filteredTree);
   }, [filteredTree, deferredSearchQuery]);
+
+  // How many notifications survive the current filters, for the tree header
+  const notificationCount = useMemo(() => {
+    if (!notificationsOnly) return 0;
+    return countTreeNodes(filteredTree, isNotificationNode);
+  }, [filteredTree, notificationsOnly]);
 
   const handleDeleteMib = useCallback(async (id: string) => {
     const mib = mibs.find(m => m.id === id);
@@ -151,6 +173,29 @@ export default function App() {
   const handleCollapseAll = useCallback(() => {
     setExpandedOids(new Set());
   }, []);
+
+  // With "Traps Only" on, only the branches leading to notifications are left,
+  // so they are expanded automatically - otherwise every trap would still be
+  // several clicks deep. Runs again whenever the filtered tree changes, so a
+  // search inside the filter also lands on visible rows.
+  useEffect(() => {
+    if (!notificationsOnly) return;
+
+    const oids = collectAllOids(filteredTree);
+
+    setExpandedOids(prev => {
+      let next: Set<string> | null = null;
+
+      for (const oid of oids) {
+        if (!prev.has(oid)) {
+          if (!next) next = new Set(prev);
+          next.add(oid);
+        }
+      }
+
+      return next ?? prev;
+    });
+  }, [notificationsOnly, filteredTree, collectAllOids]);
 
   // Toggle individual node expand/collapse.
   // Collapsing also drops every expanded descendant in the same update; doing it
@@ -299,7 +344,9 @@ export default function App() {
                   </h2>
                   {mergedTree.length > 0 && (
                     <span className="text-sm text-gray-500">
-                      {mibs.length} files / {mergedTree.length} root nodes
+                      {notificationsOnly
+                        ? `${notificationCount} trap${notificationCount !== 1 ? 's' : ''}`
+                        : `${mibs.length} files / ${mergedTree.length} root nodes`}
                     </span>
                   )}
                 </div>
@@ -311,6 +358,8 @@ export default function App() {
                   onCollapseAll={handleCollapseAll}
                   compactMode={compactMode}
                   onToggleCompactMode={() => setCompactMode(!compactMode)}
+                  notificationsOnly={notificationsOnly}
+                  onToggleNotificationsOnly={() => setNotificationsOnly(!notificationsOnly)}
                 />
               </div>
 
@@ -323,6 +372,14 @@ export default function App() {
                   expandedOids={expandedOids}
                   onToggleExpand={handleToggleExpand}
                   compactMode={compactMode}
+                  emptyTitle={mergedTree.length === 0 ? 'No MIB files loaded' : 'Nothing to show'}
+                  emptyHint={
+                    mergedTree.length === 0
+                      ? 'Upload a new file to get started'
+                      : notificationsOnly
+                        ? 'No NOTIFICATION-TYPE definitions match. Turn off "Traps Only" to see the whole tree.'
+                        : 'No node matches the search.'
+                  }
                 />
               </div>
             </main>

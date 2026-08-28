@@ -26,6 +26,9 @@ browser's storage.
   it
 - **Conflict detection** — two files declaring the same module differently are
   flagged with a field-by-field diff
+- **Traps only** — a toggle that folds the tree down to the `NOTIFICATION-TYPE`
+  definitions (traps and informs) and the branches leading to them, expanded
+  ready to read; combines with search
 - **Compact view** — folds single-child chains (`iso / org / dod / internet`)
   into one row
 - **Handles large collections** — the tree view is virtualized, so expanding

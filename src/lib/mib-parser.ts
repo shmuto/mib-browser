@@ -727,6 +727,43 @@ function escapeRegExp(text: string): string {
 }
 
 /**
+ * Filter tree to the nodes a predicate accepts, plus their ancestors
+ * @param tree MIB tree
+ * @param matches Predicate deciding whether a node is kept on its own merit
+ * @returns Filtered tree
+ */
+function filterTreeBy(tree: MibNode[], matches: (node: MibNode) => boolean): MibNode[] {
+  // Single bottom-up pass: each node is visited exactly once.
+  // Returns a copy of the node if it matches or has a matching descendant.
+  // The children array is only allocated once a child is actually kept.
+  function filterNode(node: MibNode): MibNode | null {
+    let filteredChildren: MibNode[] | null = null;
+
+    for (const child of node.children) {
+      const filteredChild = filterNode(child);
+      if (filteredChild) {
+        if (!filteredChildren) filteredChildren = [];
+        filteredChildren.push(filteredChild);
+      }
+    }
+
+    if (!filteredChildren && !matches(node)) {
+      return null;
+    }
+
+    return { ...node, children: filteredChildren ?? [] };
+  }
+
+  const result: MibNode[] = [];
+  for (const node of tree) {
+    const filtered = filterNode(node);
+    if (filtered) result.push(filtered);
+  }
+
+  return result;
+}
+
+/**
  * Filter tree to show only matching nodes and their ancestors
  * @param tree MIB tree
  * @param query Search query
@@ -749,48 +786,40 @@ export function filterTreeByQuery(tree: MibNode[], query: string): MibNode[] {
     );
   }
 
-  // Single bottom-up pass: each node is visited exactly once.
-  // Returns a copy of the node if it matches or has a matching descendant.
-  // The children array is only allocated once a child is actually kept.
-  function filterNode(node: MibNode): MibNode | null {
-    let filteredChildren: MibNode[] | null = null;
+  return filterTreeBy(tree, matchesSelf);
+}
 
-    for (const child of node.children) {
-      const filteredChild = filterNode(child);
-      if (filteredChild) {
-        if (!filteredChildren) filteredChildren = [];
-        filteredChildren.push(filteredChild);
-      }
-    }
+/**
+ * Whether a node is an SNMP notification - a trap or an inform.
+ * These are the NOTIFICATION-TYPE definitions of SMIv2.
+ * @param node MIB node
+ */
+export function isNotificationNode(node: MibNode): boolean {
+  return node.type.toUpperCase() === 'NOTIFICATION-TYPE';
+}
 
-    if (!filteredChildren && !matchesSelf(node)) {
-      return null;
-    }
-
-    return { ...node, children: filteredChildren ?? [] };
-  }
-
-  const result: MibNode[] = [];
-  for (const node of tree) {
-    const filtered = filterNode(node);
-    if (filtered) result.push(filtered);
-  }
-
-  return result;
+/**
+ * Filter tree to show only notifications (traps/informs) and their ancestors
+ * @param tree MIB tree
+ * @returns Filtered tree
+ */
+export function filterTreeToNotifications(tree: MibNode[]): MibNode[] {
+  return filterTreeBy(tree, isNotificationNode);
 }
 
 /**
  * Count all nodes in a tree
  * @param tree MIB tree
+ * @param matches Optional predicate; only the nodes it accepts are counted
  * @returns Total node count
  */
-export function countTreeNodes(tree: MibNode[]): number {
+export function countTreeNodes(tree: MibNode[], matches?: (node: MibNode) => boolean): number {
   let count = 0;
 
   const stack: MibNode[] = [...tree];
   while (stack.length > 0) {
     const node = stack.pop()!;
-    count++;
+    if (!matches || matches(node)) count++;
     for (const child of node.children) {
       stack.push(child);
     }

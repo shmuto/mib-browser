@@ -976,6 +976,7 @@ function detectConflicts(mibs: Mib[], flatTree: MibNode[]): Map<string, Conflict
 | `parseMibModule()` | `mib-parser.ts` | Parse MIB text into a `ParsedModule` |
 | `validateMibContent()` | `mib-parser.ts` | Reject files that are not MIBs |
 | `filterTreeByQuery()` | `mib-parser.ts` | Filter the tree to search matches |
+| `filterTreeToNotifications()` | `mib-parser.ts` | Filter the tree to `NOTIFICATION-TYPE` nodes |
 | `rebuildAllTrees()` | `useMibStorage.ts` | Full rebuild, with error handling |
 
 ---

@@ -14,6 +14,10 @@ interface MibTreeViewProps {
   expandedOids?: Set<string>;
   onToggleExpand?: (oid: string, expanded: boolean) => void;
   compactMode?: boolean;
+  /** Heading shown when there is nothing to render */
+  emptyTitle?: string;
+  /** Second line shown when there is nothing to render */
+  emptyHint?: string;
 }
 
 // One visible row of the tree
@@ -102,7 +106,9 @@ export default function MibTreeView({
   searchQuery,
   expandedOids,
   onToggleExpand,
-  compactMode = false
+  compactMode = false,
+  emptyTitle = 'No MIB files loaded',
+  emptyHint = 'Upload a new file to get started'
 }: MibTreeViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -174,8 +180,8 @@ export default function MibTreeView({
     return (
       <div className="h-full flex flex-col items-center justify-center text-gray-400 p-8">
         <FileQuestion size={64} className="mb-4" />
-        <p className="text-lg font-medium">No MIB files loaded</p>
-        <p className="text-sm mt-2">Upload a new file to get started</p>
+        <p className="text-lg font-medium">{emptyTitle}</p>
+        <p className="text-sm mt-2">{emptyHint}</p>
       </div>
     );
   }

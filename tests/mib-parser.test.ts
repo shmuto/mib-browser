@@ -3,6 +3,8 @@ import {
   validateMibContent,
   parseMibModule,
   filterTreeByQuery,
+  filterTreeToNotifications,
+  isNotificationNode,
   countTreeNodes,
   flattenTree,
 } from '../src/lib/mib-parser';
@@ -271,5 +273,80 @@ describe('countTreeNodes', () => {
   test('agrees with flattenTree', () => {
     const tree = new MibTreeBuilder().buildTree([parseMibModule(MINIMAL, 'MIN-MIB.txt')]);
     expect(countTreeNodes(tree)).toBe(flattenTree(tree).length);
+  });
+});
+
+describe('filterTreeToNotifications', () => {
+  const tree = new MibTreeBuilder().buildTree([
+    parseMibModule(
+      `TRAP-MIB DEFINITIONS ::= BEGIN
+IMPORTS NOTIFICATION-TYPE, OBJECT-TYPE, enterprises FROM SNMPv2-SMI;
+trapRoot OBJECT IDENTIFIER ::= { enterprises 5151 }
+trapObjects OBJECT IDENTIFIER ::= { trapRoot 1 }
+plainLeaf OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "not a trap"
+    ::= { trapObjects 1 }
+trapEvents OBJECT IDENTIFIER ::= { trapRoot 2 }
+linkWentDown NOTIFICATION-TYPE
+    OBJECTS     { plainLeaf }
+    STATUS      current
+    DESCRIPTION "a trap"
+    ::= { trapEvents 1 }
+linkCameBack NOTIFICATION-TYPE
+    OBJECTS     { plainLeaf }
+    STATUS      current
+    DESCRIPTION "another trap"
+    ::= { trapEvents 2 }
+END`,
+      'trap.txt'
+    ),
+  ]);
+
+  const names = (nodes: MibNode[]) => flattenTree(nodes).map(n => n.name);
+
+  test('recognises NOTIFICATION-TYPE nodes', () => {
+    const byName = new Map(flattenTree(tree).map(n => [n.name, n]));
+    expect(isNotificationNode(byName.get('linkWentDown')!)).toBe(true);
+    expect(isNotificationNode(byName.get('plainLeaf')!)).toBe(false);
+    expect(isNotificationNode(byName.get('trapEvents')!)).toBe(false);
+  });
+
+  test('keeps notifications and the branches leading to them', () => {
+    const kept = names(filterTreeToNotifications(tree));
+    expect(kept).toContain('linkWentDown');
+    expect(kept).toContain('linkCameBack');
+    expect(kept).toContain('trapEvents');
+    expect(kept).toContain('trapRoot');
+    expect(kept).toContain('iso');
+  });
+
+  test('drops branches with no notification under them', () => {
+    const kept = names(filterTreeToNotifications(tree));
+    expect(kept).not.toContain('plainLeaf');
+    expect(kept).not.toContain('trapObjects');
+  });
+
+  test('composes with the search filter', () => {
+    const kept = names(filterTreeByQuery(filterTreeToNotifications(tree), 'linkWentDown'));
+    expect(kept).toContain('linkWentDown');
+    expect(kept).not.toContain('linkCameBack');
+  });
+
+  test('returns nothing for a tree without notifications', () => {
+    const plain = new MibTreeBuilder().buildTree([parseMibModule(MINIMAL, 'MIN-MIB.txt')]);
+    expect(filterTreeToNotifications(plain)).toHaveLength(0);
+  });
+
+  test('does not modify the tree it filters', () => {
+    const before = countTreeNodes(tree);
+    filterTreeToNotifications(tree);
+    expect(countTreeNodes(tree)).toBe(before);
+  });
+
+  test('countTreeNodes counts only the nodes a predicate accepts', () => {
+    expect(countTreeNodes(filterTreeToNotifications(tree), isNotificationNode)).toBe(2);
   });
 });
