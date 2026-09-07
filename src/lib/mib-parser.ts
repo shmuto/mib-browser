@@ -124,7 +124,7 @@ export function parseMibFile(
     }
 
     // Remove IMPORTS block (to prevent parsing interference)
-    cleanedContent = cleanedContent.replace(/IMPORTS[\s\S]*?;/gi, '');
+    cleanedContent = removeImportsClause(cleanedContent);
 
     // Extract OBJECT IDENTIFIER definitions (pass current oidMap for reference)
     const oidAssignments = extractOidAssignments(cleanedContent, oidMap);
@@ -247,10 +247,10 @@ function extractImports(content: string): Map<string, string> {
   const imports = new Map<string, string>();
 
   // Find IMPORTS block
-  const importsMatch = content.match(/IMPORTS([\s\S]*?);/i);
-  if (!importsMatch) return imports;
+  const clause = findImportsClause(content);
+  if (!clause) return imports;
 
-  const importsBlock = importsMatch[1];
+  const importsBlock = clause.body;
 
   // Split by "FROM module-name" pattern
   // Example: "aristaProducts FROM ARISTA-SMI-MIB"
@@ -286,11 +286,98 @@ function extractImports(content: string): Map<string, string> {
 }
 
 /**
+ * Whether every double quote in the text is matched by a closing one.
+ *
+ * The scanners below track string literals so that MIB text is not mistaken
+ * for syntax. A file with an odd number of quotes would leave them stuck
+ * inside a string for the rest of the file, so they fall back to the older,
+ * quote-blind behaviour instead - a malformed file should parse no worse
+ * than it did before.
+ */
+function hasBalancedQuotes(content: string): boolean {
+  let count = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) === 34 /* " */) count++;
+  }
+  return count % 2 === 0;
+}
+
+/**
  * Remove comments
+ *
+ * A comment runs from `--` to the end of the line, but only outside a quoted
+ * string: DESCRIPTION text regularly contains `--`, either as a dash in prose
+ * or as a row of them drawing a table, and cutting the line there would take
+ * the closing quote with it and swallow the rest of the definition.
  */
 function removeComments(content: string): string {
-  // Remove comments starting with -- to end of line
-  return content.replace(/--[^\n]*/g, '');
+  if (!hasBalancedQuotes(content)) {
+    // Unbalanced quotes: strip comments the old way rather than treat the
+    // remainder of the file as one long string
+    return content.replace(/--[^\n]*/g, '');
+  }
+
+  let result = '';
+  let copiedFrom = 0;
+  let inString = false;
+
+  for (let i = 0; i < content.length; i++) {
+    const code = content.charCodeAt(i);
+
+    if (inString) {
+      if (code === 34 /* " */) inString = false;
+      continue;
+    }
+
+    if (code === 34 /* " */) {
+      inString = true;
+      continue;
+    }
+
+    if (code === 45 /* - */ && content.charCodeAt(i + 1) === 45) {
+      // Comment: skip to the end of the line, keeping the newline itself
+      let end = content.indexOf('\n', i);
+      if (end === -1) end = content.length;
+      result += content.slice(copiedFrom, i);
+      copiedFrom = end;
+      i = end;
+    }
+  }
+
+  return copiedFrom === 0 ? content : result + content.slice(copiedFrom);
+}
+
+/**
+ * Locate the module's IMPORTS clause: the keyword through the semicolon that
+ * ends it.
+ *
+ * The keyword is matched case-sensitively and only at the start of a line, so
+ * that the word "imports" in a DESCRIPTION is not mistaken for the clause -
+ * which used to delete everything from that description to the next semicolon,
+ * silently dropping whatever objects were defined in between.
+ */
+function findImportsClause(content: string): { start: number; end: number; body: string } | null {
+  const match = /^[ \t]*IMPORTS\b/m.exec(content);
+  if (!match) return null;
+
+  const bodyStart = match.index + match[0].length;
+  const semicolon = content.indexOf(';', bodyStart);
+  if (semicolon === -1) return null;
+
+  return {
+    start: match.index,
+    end: semicolon + 1,
+    body: content.slice(bodyStart, semicolon),
+  };
+}
+
+/**
+ * Remove the IMPORTS clause so its identifiers are not read as definitions
+ */
+function removeImportsClause(content: string): string {
+  const clause = findImportsClause(content);
+  if (!clause) return content;
+  return content.slice(0, clause.start) + content.slice(clause.end);
 }
 
 /**
@@ -484,49 +571,78 @@ function extractObjectTypes(content: string): string[] {
   const objectTypes: string[] = [];
 
   // OBJECT-TYPE blocks can contain nested braces (e.g., INDEX { ifIndex })
-  // We need to carefully track braces to handle nested structures
+  // We need to carefully track braces to handle nested structures.
+  // Braces inside a quoted string are not syntax - a DESCRIPTION reading
+  // "set to { 1 } to enable" is common, and a lone brace in one would
+  // otherwise leave the block open and swallow every definition after it.
+  const trackStrings = hasBalancedQuotes(content);
   const lines = content.split('\n');
   let currentBlock = '';
   let inObjectType = false;
-  let foundAssignment = false;
+  let sawAssignment = false;
+  let braceOpened = false;
   let braceDepth = 0;
+  let inString = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Check for start of new OBJECT-TYPE (only when not already in one)
-    if (!inObjectType && /^\s*\w+\s+OBJECT-TYPE/i.test(line)) {
+    // Check for start of new OBJECT-TYPE (only when not already in one, and
+    // not in the middle of a string literal)
+    if (!inObjectType && !inString && /^\s*\w+\s+OBJECT-TYPE/i.test(line)) {
       inObjectType = true;
-      foundAssignment = false;
+      sawAssignment = false;
+      braceOpened = false;
       braceDepth = 0;
       currentBlock = line + '\n';
-      continue;
+    } else if (inObjectType) {
+      currentBlock += line + '\n';
     }
 
-    if (inObjectType) {
-      currentBlock += line + '\n';
+    // Walk the line once, tracking string state and - inside a block - the
+    // brace depth and the ::= assignment
+    // (charCodeAt instead of iterating the string: this runs over every line
+    // of every file)
+    for (let c = 0; c < line.length; c++) {
+      const code = line.charCodeAt(c);
 
-      // Check if this line has the ::= assignment
-      if (/::=\s*\{/.test(line)) {
-        foundAssignment = true;
+      if (trackStrings) {
+        if (inString) {
+          if (code === 34 /* " */) inString = false;
+          continue;
+        }
+        if (code === 34 /* " */) {
+          inString = true;
+          continue;
+        }
       }
 
-      // Count braces to track nesting depth
-      // (charCodeAt instead of iterating the string: this runs over every line
-      // of every OBJECT-TYPE block in every file)
-      for (let c = 0; c < line.length; c++) {
-        const code = line.charCodeAt(c);
-        if (code === 123 /* { */) braceDepth++;
-        else if (code === 125 /* } */) braceDepth--;
-      }
+      if (!inObjectType) continue;
 
-      // If we found the assignment and all braces are balanced, we're done
-      if (foundAssignment && braceDepth === 0) {
-        objectTypes.push(currentBlock.trim());
-        inObjectType = false;
-        currentBlock = '';
-        foundAssignment = false;
+      if (code === 123 /* { */) {
+        braceDepth++;
+        if (sawAssignment) braceOpened = true;
+      } else if (code === 125 /* } */) {
+        braceDepth--;
+      } else if (
+        code === 58 /* : */ &&
+        line.charCodeAt(c + 1) === 58 &&
+        line.charCodeAt(c + 2) === 61 /* = */
+      ) {
+        // ::= - the OID assignment. Its brace may be on a later line, so the
+        // block only ends once that brace has opened and closed again.
+        sawAssignment = true;
+        c += 2;
       }
+    }
+
+    // If the assignment's braces are balanced again, we're done
+    if (inObjectType && sawAssignment && braceOpened && braceDepth === 0) {
+      objectTypes.push(currentBlock.trim());
+      inObjectType = false;
+      currentBlock = '';
+      sawAssignment = false;
+      braceOpened = false;
     }
   }
 
@@ -871,7 +987,7 @@ export function parseMibModule(content: string, fileName?: string): import('../t
   );
 
   // Remove IMPORTS block to prevent parsing interference
-  const cleanedWithoutImports = cleanedContent.replace(/IMPORTS[\s\S]*?;/gi, '');
+  const cleanedWithoutImports = removeImportsClause(cleanedContent);
 
   // Extract OID assignments (OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY)
   // Pass empty map to prevent OID resolution

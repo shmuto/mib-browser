@@ -172,6 +172,133 @@ END`;
   });
 });
 
+describe('parseMibModule: MIB text is not mistaken for syntax', () => {
+  const withDescription = (description: string) => `TXT-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM SNMPv2-SMI;
+txtRoot OBJECT IDENTIFIER ::= { enterprises 4243 }
+txtOne OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION ${description}
+    ::= { txtRoot 1 }
+txtTwo OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "second"
+    ::= { txtRoot 2 }
+END`;
+
+  // Regression: `--` starts a comment only outside a string. A dash pair in
+  // prose used to cut the line short, taking the closing quote with it, and
+  // the description was lost.
+  test('keeps a description containing a dash pair', () => {
+    const parsed = parseMibModule(withDescription('"Counts things -- see RFC 1213 -- for details."'), 't.txt');
+
+    expect(parsed.objects.map(o => o.name)).toContain('txtTwo');
+    expect(parsed.objects.find(o => o.name === 'txtOne')!.description)
+      .toBe('Counts things -- see RFC 1213 -- for details.');
+  });
+
+  // Regression: a row of dashes drawing a table inside a DESCRIPTION is the
+  // same bug, and is how real vendor MIBs lay out value tables.
+  test('keeps a description containing a rule of dashes', () => {
+    const parsed = parseMibModule(
+      withDescription('"Format:\n         ------------\n         value | meaning\n         ------------"'),
+      't.txt'
+    );
+
+    const description = parsed.objects.find(o => o.name === 'txtOne')!.description;
+    expect(description).toContain('value | meaning');
+    expect(parsed.objects.map(o => o.name)).toContain('txtTwo');
+  });
+
+  // Regression: braces in a DESCRIPTION are not the OBJECT-TYPE's braces. A
+  // lone one used to leave the block open and swallow every later definition.
+  test('keeps objects whose description contains an unbalanced brace', () => {
+    const parsed = parseMibModule(withDescription('"Values are wrapped in { braces."'), 't.txt');
+
+    expect(parsed.objects.map(o => o.name)).toEqual(
+      expect.arrayContaining(['txtRoot', 'txtOne', 'txtTwo'])
+    );
+  });
+
+  // Regression: the IMPORTS clause was matched case-insensitively anywhere in
+  // the file, so the word "imports" in a description deleted everything from
+  // there to the next semicolon - silently dropping the objects in between.
+  test('does not treat the word "imports" in a description as the IMPORTS clause', () => {
+    // The semicolon that used to end the bogus clause is in a *later*
+    // description, so everything defined in between disappeared.
+    const content = `IMP-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM SNMPv2-SMI;
+impRoot OBJECT IDENTIFIER ::= { enterprises 4246 }
+impOne OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Number of imports processed by the agent."
+    ::= { impRoot 1 }
+impTwo OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Second object; note the semicolon."
+    ::= { impRoot 2 }
+impThree OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "third"
+    ::= { impRoot 3 }
+END`;
+    const parsed = parseMibModule(content, 'imp.txt');
+
+    expect(parsed.objects.map(o => o.name)).toEqual(
+      expect.arrayContaining(['impRoot', 'impOne', 'impTwo', 'impThree'])
+    );
+    expect(parsed.imports.get('enterprises')).toBe('SNMPv2-SMI');
+  });
+
+  // A quote inside a comment is not the start of a string: the comment is
+  // dropped whole, before any string tracking sees it.
+  test('ignores quotes that appear inside a comment', () => {
+    const content = `Q-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM SNMPv2-SMI;
+qRoot OBJECT IDENTIFIER ::= { enterprises 4244 }
+-- the agent reports a "best effort" value
+qOne OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "first"
+    ::= { qRoot 1 }
+END`;
+    const parsed = parseMibModule(content, 'q.txt');
+
+    expect(parsed.objects.find(o => o.name === 'qOne')!.description).toBe('first');
+  });
+
+  // A file with an odd number of quotes cannot be tracked; it must parse no
+  // worse than it did before string tracking existed.
+  test('still parses a module with an unbalanced quote', () => {
+    const content = `BAD-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM SNMPv2-SMI;
+badRoot OBJECT IDENTIFIER ::= { enterprises 4245 }
+badOne OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "unterminated
+    ::= { badRoot 1 }
+END`;
+    const parsed = parseMibModule(content, 'bad.txt');
+
+    expect(parsed.moduleName).toBe('BAD-MIB');
+    expect(parsed.objects.map(o => o.name)).toContain('badRoot');
+  });
+});
+
 describe('filterTreeByQuery', () => {
   const tree = new MibTreeBuilder().buildTree([
     parseMibModule(
