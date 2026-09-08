@@ -328,7 +328,6 @@ export default function App() {
               <div className="flex-1 overflow-y-auto">
                 <SavedMibsList
                   mibs={mibs}
-                  activeMibId={null}
                   onSelect={setViewingMib}
                   onDelete={handleDeleteMib}
                   onBulkDelete={handleBulkDelete}

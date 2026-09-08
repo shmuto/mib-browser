@@ -27,7 +27,7 @@ The MIB tree construction system is a robust solution for parsing multiple MIB m
 |------|---------|
 | `src/lib/mib-tree-builder.ts` | Core tree building logic (3-pass processing) |
 | `src/lib/mib-parser.ts` | MIB grammar parsing |
-| `src/lib/oid-utils.ts` | OID operations and hierarchy utilities |
+| `src/lib/oid-utils.ts` | `getOidPath`, the one OID helper the UI needs |
 | `src/hooks/useMibStorage.ts` | Tree rebuild and lifecycle management |
 | `src/lib/indexeddb.ts` | Tree persistence |
 
@@ -436,81 +436,17 @@ node.oid = "1.3.6.1.4.1.30065.3011.7124.3282";
 
 ### OID Utilities (`src/lib/oid-utils.ts`)
 
-#### Basic Operations
+One helper, used by the breadcrumb and by the auto-expand that reveals a
+selected node:
 
 ```typescript
-// Convert OID string to number array
-parseOid(oid: string): number[]
-// Example: "1.3.6.1.2.1" → [1, 3, 6, 1, 2, 1]
-
-// Convert number array to OID string
-formatOid(parts: number[]): string
-// Example: [1, 3, 6, 1, 2, 1] → "1.3.6.1.2.1"
-
-// Lexicographic comparison of OIDs
-compareOids(oid1: string, oid2: string): number
-// Returns -1, 0, or 1
-
-// Sort OID array
-sortOids(oids: string[]): string[]
-```
-
-#### Hierarchy Operations
-
-```typescript
-// Get parent OID
-getParentOid(oid: string): string | null
-// Example: "1.3.6.1.2.1" → "1.3.6.1.2"
-
-// Get OID depth
-getOidDepth(oid: string): number
-// Example: "1.3.6.1.2.1" → 5
-
-// Get OID path
+// Get OID path - every prefix from the root to the OID itself
 getOidPath(oid: string): string[]
 // Example: "1.3.6.1.2" → ["1", "1.3", "1.3.6", "1.3.6.1", "1.3.6.1.2"]
-
-// Check descendant relationship
-isDescendant(parentOid: string, childOid: string): boolean
-// Example: isDescendant("1.3.6", "1.3.6.1.2") → true
-
-// Check if direct child
-isDirectChild(parentOid: string, childOid: string): boolean
-// Example: isDirectChild("1.3.6", "1.3.6.1") → true
-//          isDirectChild("1.3.6", "1.3.6.1.2") → false
-
-// Find common ancestor
-getCommonAncestor(oid1: string, oid2: string): string | null
-// Example: getCommonAncestor("1.3.6.1.2", "1.3.6.1.4") → "1.3.6.1"
 ```
 
-#### OID Mapping
-
-```typescript
-// Build OID → name map from tree
-buildOidNameMap(tree: MibNode[]): Map<string, string>
-
-// Convert OID path to name path
-getOidNamePath(oid: string, oidNameMap: Map<string, string>): string | null
-// Example: "1.3.6.1.2.1.1.1" → "iso.org.dod.internet.mgmt.mib-2.system.sysDescr"
-
-// Format OID for display
-formatOidDisplay(oid: string, name?: string): string
-// Example: formatOidDisplay("1.3.6.1.2.1.1.1", "sysDescr")
-//          → "sysDescr (1.3.6.1.2.1.1.1)"
-```
-
-#### OID Validation
-
-```typescript
-// Validate OID
-isValidOid(oid: string): boolean
-// Checks that all parts are non-negative integers
-
-// Get last OID number
-getLastOidNumber(oid: string): number
-// Example: "1.3.6.1.2.1" → 1
-```
+Sub-identifiers are parsed with a leading dot tolerated, so `.1.3.6` and
+`1.3.6` give the same path.
 
 ---
 

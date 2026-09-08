@@ -2,8 +2,6 @@
  * Storage utility functions
  */
 
-import type { StoredMibData } from '../types/mib';
-
 /**
  * Read a persisted UI setting.
  *
@@ -79,27 +77,6 @@ export function sanitizeFileName(fileName: string): string {
   }
 
   return sanitized;
-}
-
-/**
- * Validate StoredMibData structure
- * @param data Data to validate
- * @returns true if valid
- */
-export function isValidStoredMibData(data: unknown): data is StoredMibData {
-  if (!data || typeof data !== 'object') return false;
-
-  const mib = data as Record<string, unknown>;
-
-  return (
-    typeof mib.id === 'string' &&
-    typeof mib.fileName === 'string' &&
-    typeof mib.content === 'string' &&
-    typeof mib.nodeCount === 'number' &&
-    typeof mib.uploadedAt === 'number' &&
-    typeof mib.lastAccessedAt === 'number' &&
-    typeof mib.size === 'number'
-  );
 }
 
 /**

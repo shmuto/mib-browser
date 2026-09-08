@@ -79,19 +79,6 @@ export async function getAllMibs(): Promise<StoredMibData[]> {
   });
 }
 
-// Get a single MIB by ID
-export async function getMib(id: string): Promise<StoredMibData | null> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.get(id);
-
-    request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => reject(request.error);
-  });
-}
-
 // Get a single MIB by file name (uses the fileName index)
 // Avoids loading every stored MIB just to look one up.
 export async function getMibByFileName(fileName: string): Promise<StoredMibData | null> {

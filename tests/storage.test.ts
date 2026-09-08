@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { formatFileSize, sanitizeFileName, isValidStoredMibData } from '../src/lib/storage';
+import { formatFileSize, sanitizeFileName } from '../src/lib/storage';
 
 describe('formatFileSize', () => {
   test.each([
@@ -44,22 +44,4 @@ describe('sanitizeFileName', () => {
   test('caps the length', () => {
     expect(sanitizeFileName('a'.repeat(400) + '.txt').length).toBeLessThanOrEqual(255);
   });
-});
-
-describe('isValidStoredMibData', () => {
-  const valid = {
-    id: '1', fileName: 'a.txt', content: 'x',
-    nodeCount: 0, uploadedAt: 0, lastAccessedAt: 0, size: 1,
-  };
-
-  test('accepts a complete record', () => {
-    expect(isValidStoredMibData(valid)).toBe(true);
-  });
-
-  test.each([null, undefined, 'a string', 42, {}, { ...valid, size: '1' }, { ...valid, id: 1 }])(
-    'rejects %p',
-    data => {
-      expect(isValidStoredMibData(data)).toBe(false);
-    }
-  );
 });

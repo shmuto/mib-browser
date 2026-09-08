@@ -68,7 +68,7 @@ export function primeParseCache(id: string, content: string, module: ParsedModul
   parseCache.set(id, { content, module });
 }
 
-export function getCachedIds(): string[] {
+function getCachedIds(): string[] {
   return Array.from(parseCache.keys());
 }
 
