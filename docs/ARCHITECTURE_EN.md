@@ -69,9 +69,9 @@ management library — component state plus one hook is enough at this size.
 | `mib-tree-builder.ts` | Merge many `ParsedModule`s into one OID tree (`MibTreeBuilder`, 3-pass). |
 | `rebuild.ts` | The whole rebuild pipeline as one plain function: parse (with a session cache), build, per-file bookkeeping, persist the tree. Runs in the worker, or inline if there is none. |
 | `rebuild-client.ts` | Main-thread side of the worker: request/response plumbing, tracking which file contents the worker already has, and the no-worker fallback. |
-| `oid-utils.ts` | OID string handling: parse, compare, ancestry, `getOidPath`, name maps. |
+| `oid-utils.ts` | `getOidPath` - every prefix from the root to an OID. |
 | `indexeddb.ts` | All IndexedDB access. Nothing else touches the database. |
-| `storage.ts` | Small helpers: `generateId`, `sanitizeFileName`, `formatFileSize`, `isValidStoredMibData`. |
+| `storage.ts` | Small helpers: `generateId`, `sanitizeFileName`, `formatFileSize`, and the guarded `readSetting` / `writeSetting` used for UI preferences. |
 
 ### `src/workers`
 
@@ -301,18 +301,3 @@ Three different things can go wrong with a MIB, and each has its own surface:
 A missing dependency never blocks the rest of the tree: the affected modules are
 dropped and the build is retried without them.
 
----
-
-## Legacy modules
-
-Not everything in `src` is wired up. These are dead as of now, kept here so
-nobody mistakes them for live code:
-
-- `src/lib/mib-merger.ts` — `findNodeByOid` / `getTreeStats`, unused.
-- `src/components/ConflictDialog.tsx` — superseded by
-  `ConflictNotificationPanel`, which has its own dialog.
-- `parseMibFile()` and `buildTree()` in `mib-parser.ts` — the pre-3-pass flat
-  parsing path. `parseMibModule()` + `MibTreeBuilder` replaced it.
-- `test-mib-parser.ts` in the repository root — a scratch script that reads
-  ARISTA MIBs from a `tmp/` directory that is not part of the repository. See
-  [`test-data/`](../test-data/README.md) for the fixtures that replaced it.

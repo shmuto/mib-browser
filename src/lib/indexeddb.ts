@@ -79,19 +79,6 @@ export async function getAllMibs(): Promise<StoredMibData[]> {
   });
 }
 
-// Get a single MIB by ID
-export async function getMib(id: string): Promise<StoredMibData | null> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE_NAME, 'readonly');
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.get(id);
-
-    request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => reject(request.error);
-  });
-}
-
 // Get a single MIB by file name (uses the fileName index)
 // Avoids loading every stored MIB just to look one up.
 export async function getMibByFileName(fileName: string): Promise<StoredMibData | null> {
@@ -153,36 +140,21 @@ export async function deleteMib(id: string): Promise<void> {
   });
 }
 
-// Delete multiple MIBs by IDs
+// Delete multiple MIBs by IDs, in a single transaction
 export async function deleteMibs(ids: string[]): Promise<void> {
+  // No requests would ever fire, so the transaction would never complete
+  if (ids.length === 0) return;
+
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
 
-    let completed = 0;
-    const errors: Error[] = [];
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
 
-    ids.forEach(id => {
-      const request = store.delete(id);
-      request.onsuccess = () => {
-        completed++;
-        if (completed === ids.length) {
-          if (errors.length > 0) {
-            reject(errors[0]);
-          } else {
-            resolve();
-          }
-        }
-      };
-      request.onerror = () => {
-        errors.push(request.error as Error);
-        completed++;
-        if (completed === ids.length) {
-          reject(errors[0]);
-        }
-      };
-    });
+    ids.forEach(id => store.delete(id));
   });
 }
 

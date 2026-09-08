@@ -12,14 +12,13 @@ import {
   saveMibs,
   deleteMib,
   deleteMibs,
-  getMib,
   getStorageInfo,
   clearAllMibs,
   migrateFromLocalStorage,
   loadMergedTree,
   clearMergedTree,
 } from '../lib/indexeddb';
-import { generateId, isValidStoredMibData } from '../lib/storage';
+import { generateId } from '../lib/storage';
 import { parseMibModule, validateMibContent } from '../lib/mib-parser';
 import { requestRebuild, noteParsedModule } from '../lib/rebuild-client';
 import type { RebuildResult } from '../lib/rebuild';
@@ -254,52 +253,6 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     }
   }, [loadData, rebuildAllTrees]);
 
-  // Get MIB by ID
-  const getMibById = useCallback(async (id: string): Promise<StoredMibData | null> => {
-    return await getMib(id);
-  }, []);
-
-  // Export all MIBs as JSON
-  const exportData = useCallback(async (): Promise<string> => {
-    const allMibs = await getAllMibs();
-    return JSON.stringify(allMibs, null, 2);
-  }, []);
-
-  // Import MIBs from JSON
-  const importData = useCallback(async (json: string): Promise<boolean> => {
-    try {
-      const parsed = JSON.parse(json);
-
-      // Security: Validate JSON data structure
-      if (!Array.isArray(parsed)) {
-        console.error('Invalid import data: expected an array');
-        return false;
-      }
-
-      // Validate each MIB structure
-      const validMibs: StoredMibData[] = [];
-      for (const item of parsed) {
-        if (isValidStoredMibData(item)) {
-          validMibs.push(item);
-        } else {
-          console.warn('Skipping invalid MIB data:', item);
-        }
-      }
-
-      if (validMibs.length === 0) {
-        console.error('No valid MIB data found in import');
-        return false;
-      }
-
-      await saveMibs(validMibs);
-      await loadData();
-      return true;
-    } catch (error) {
-      console.error('Failed to import data:', error);
-      return false;
-    }
-  }, [loadData]);
-
   // Upload MIB from text content
   const uploadMibFromText = useCallback(async (content: string, fileName: string, skipReload = false): Promise<UploadResult> => {
     try {
@@ -391,11 +344,7 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
     uploadMibFromText,
     removeMib,
     removeMibs,
-    getMibById,
-    exportData,
-    importData,
     clearAll,
     rebuildTree,
-    reload: loadData,
   };
 }

@@ -9,7 +9,6 @@ type SortOrder = 'asc' | 'desc';
 
 interface SavedMibsListProps {
   mibs: StoredMibData[];
-  activeMibId: string | null;
   onSelect: (mib: StoredMibData) => void;
   onDelete: (id: string) => Promise<void>;
   onBulkDelete?: (ids: string[]) => Promise<void>;
@@ -18,7 +17,6 @@ interface SavedMibsListProps {
 
 export default function SavedMibsList({
   mibs,
-  activeMibId,
   onSelect,
   onDelete,
   onBulkDelete,
@@ -252,12 +250,7 @@ export default function SavedMibsList({
               {filteredMibs.map(mib => {
                 const isSelected = selectedIds.has(mib.id);
                 return (
-                  <tr
-                    key={mib.id}
-                    className={`hover:bg-gray-50 transition-colors ${
-                      mib.id === activeMibId ? 'bg-blue-50' : ''
-                    }`}
-                  >
+                  <tr key={mib.id} className="hover:bg-gray-50 transition-colors">
                     {/* Checkbox */}
                     <td className="px-2 py-2">
                       <button

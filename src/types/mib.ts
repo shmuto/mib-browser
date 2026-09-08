@@ -14,20 +14,6 @@ export interface MibNode {
   fileName?: string;        // Source file name (e.g., "IF-MIB.txt")
 }
 
-// Flat MIB node (immediately after parsing)
-export interface FlatMibNode {
-  oid: string;
-  name: string;
-  parent: string | null;
-  type: string;
-  syntax: string;
-  access: string;
-  status: string;
-  description: string;
-  mibName?: string;
-  fileName?: string;
-}
-
 // MIB data for storage
 export interface StoredMibData {
   id: string;               // Unique ID (UUID)
@@ -41,28 +27,6 @@ export interface StoredMibData {
   conflicts?: MibConflict[]; // Conflicts with other MIBs (if any)
   error?: string;           // Error message if tree building failed
   missingDependencies?: string[]; // List of missing MIB dependencies
-}
-
-// Application state
-export interface AppState {
-  savedMibs: StoredMibData[];
-  activeMibId: string | null;
-  selectedNode: MibNode | null;
-  searchQuery: string;
-}
-
-// Parse error information
-export interface ParseError {
-  line: number;
-  message: string;
-  context?: string;
-}
-
-// Parse result
-export interface ParseResult {
-  success: boolean;
-  nodes: FlatMibNode[];
-  errors: ParseError[];
 }
 
 // Storage information

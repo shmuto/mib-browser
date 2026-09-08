@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, ReactNode } from 'react';
+import { readSetting, writeSetting } from '../lib/storage';
 
 interface ResizablePanelProps {
   leftPanel: ReactNode;
@@ -20,7 +21,7 @@ export default function ResizablePanel({
   // Load width from localStorage if storageKey is provided
   const [leftWidth, setLeftWidth] = useState(() => {
     if (storageKey) {
-      const saved = localStorage.getItem(storageKey);
+      const saved = readSetting(storageKey);
       if (saved !== null) {
         const parsed = parseFloat(saved);
         if (!isNaN(parsed) && parsed >= minLeftWidth && parsed <= maxLeftWidth) {
@@ -37,7 +38,7 @@ export default function ResizablePanel({
   // Save to localStorage whenever width changes
   useEffect(() => {
     if (storageKey) {
-      localStorage.setItem(storageKey, String(leftWidth));
+      writeSetting(storageKey, String(leftWidth));
     }
   }, [leftWidth, storageKey]);
 

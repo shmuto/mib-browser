@@ -101,15 +101,22 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
     );
   }
 
-  // Find which MIB file contains this node by matching mibName
-  const findSourceMib = (mibName?: string): StoredMibData | null => {
-    if (!mibName) return null;
+  // Find which MIB file contains this node.
+  // The file the node actually came from is matched first: when several files
+  // declare the same module - which is exactly the case the conflict panel
+  // reports - matching on the module name alone points at whichever of them
+  // happens to be stored first, not the one this node was read from.
+  const findSourceMib = (): StoredMibData | null => {
+    if (node.fileName) {
+      const byFile = mibs.find(mib => mib.fileName === node.fileName);
+      if (byFile) return byFile;
+    }
 
-    // Find MIB by matching mibName (module name) with stored MIB's mibName
-    return mibs.find(mib => mib.mibName === mibName) || null;
+    if (!node.mibName) return null;
+    return mibs.find(mib => mib.mibName === node.mibName) || null;
   };
 
-  const sourceMib = findSourceMib(node.mibName);
+  const sourceMib = findSourceMib();
   const mibNotation = node.mibName ? `${node.mibName}::${node.name}` : null;
 
   const copyAllDetails = () => {

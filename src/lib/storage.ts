@@ -2,7 +2,36 @@
  * Storage utility functions
  */
 
-import type { StoredMibData } from '../types/mib';
+/**
+ * Read a persisted UI setting.
+ *
+ * Browsers configured to block site data throw on the `localStorage` accessor
+ * itself, not just on read - and these settings are read while rendering, so
+ * an unguarded access takes the whole app down with it.
+ * @param key Storage key
+ * @returns The stored string, or null if absent or unreadable
+ */
+export function readSetting(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist a UI setting, ignoring a storage that refuses to be written to
+ * (blocked site data, or a full quota)
+ * @param key Storage key
+ * @param value Value to store
+ */
+export function writeSetting(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // A setting that cannot be remembered is not worth failing over
+  }
+}
 
 /**
  * Generate a unique ID
@@ -51,37 +80,20 @@ export function sanitizeFileName(fileName: string): string {
 }
 
 /**
- * Validate StoredMibData structure
- * @param data Data to validate
- * @returns true if valid
- */
-export function isValidStoredMibData(data: unknown): data is StoredMibData {
-  if (!data || typeof data !== 'object') return false;
-
-  const mib = data as Record<string, unknown>;
-
-  return (
-    typeof mib.id === 'string' &&
-    typeof mib.fileName === 'string' &&
-    typeof mib.content === 'string' &&
-    typeof mib.nodeCount === 'number' &&
-    typeof mib.uploadedAt === 'number' &&
-    typeof mib.lastAccessedAt === 'number' &&
-    typeof mib.size === 'number'
-  );
-}
-
-/**
  * Format file size to human-readable format
  * @param bytes Byte count
  * @returns Formatted string
  */
 export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 Bytes';
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 Bytes';
 
   const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+
+  // Clamped to the units we have names for: a fractional byte count gives a
+  // negative index and anything past the last unit runs off the end, both of
+  // which used to render as "undefined"
+  const i = Math.min(sizes.length - 1, Math.max(0, Math.floor(Math.log(bytes) / Math.log(k))));
 
   return `${Math.round(bytes / Math.pow(k, i) * 100) / 100} ${sizes[i]}`;
 }

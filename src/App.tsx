@@ -3,7 +3,7 @@ import type { MibNode, StoredMibData } from './types/mib';
 import { useMibStorage } from './hooks/useMibStorage';
 import { filterTreeByQuery, filterTreeToNotifications, isNotificationNode, countTreeNodes } from './lib/mib-parser';
 import { getOidPath } from './lib/oid-utils';
-import { sanitizeFileName } from './lib/storage';
+import { sanitizeFileName, readSetting, writeSetting } from './lib/storage';
 import toast, { Toaster } from 'react-hot-toast';
 
 // Components
@@ -42,7 +42,6 @@ export default function App() {
     removeMibs,
     clearAll,
     rebuildTree,
-    reload,
   } = useMibStorage({ onNotification: addNotification });
 
   const [selectedNode, setSelectedNode] = useState<MibNode | null>(null);
@@ -52,22 +51,22 @@ export default function App() {
 
   // Load compact mode from localStorage (default: true)
   const [compactMode, setCompactMode] = useState(() => {
-    const saved = localStorage.getItem('mib-browser-compact-mode');
+    const saved = readSetting('mib-browser-compact-mode');
     return saved !== null ? saved === 'true' : true;
   });
 
   // Save compact mode to localStorage whenever it changes
   useEffect(() => {
-    localStorage.setItem('mib-browser-compact-mode', String(compactMode));
+    writeSetting('mib-browser-compact-mode', String(compactMode));
   }, [compactMode]);
 
   // Load the notifications-only filter from localStorage (default: off)
   const [notificationsOnly, setNotificationsOnly] = useState(() => {
-    return localStorage.getItem('mib-browser-notifications-only') === 'true';
+    return readSetting('mib-browser-notifications-only') === 'true';
   });
 
   useEffect(() => {
-    localStorage.setItem('mib-browser-notifications-only', String(notificationsOnly));
+    writeSetting('mib-browser-notifications-only', String(notificationsOnly));
   }, [notificationsOnly]);
 
   // Filtering a large tree is expensive, so it runs against a deferred copy of
@@ -135,9 +134,12 @@ export default function App() {
       document.body.appendChild(link);
       link.click();
 
-      // Cleanup
       document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+
+      // Revoking straight away can cancel a download the browser has not
+      // started reading yet, which is how a multi-file download ends up
+      // saving only some of the files
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
     });
   }, []);
 
@@ -145,6 +147,18 @@ export default function App() {
     const result = await uploadMib(file, forceUpload, skipReload);
     return result;
   }, [uploadMib]);
+
+  // Recovery after a batch upload that did not finish cleanly. Only the last
+  // file of a batch triggers the rebuild, so a batch whose last file is
+  // rejected leaves the earlier ones stored but absent from the tree - reading
+  // the stored tree back would just show that stale tree, so rebuild instead.
+  const handleUploadRecovery = useCallback(async () => {
+    try {
+      await rebuildTree();
+    } catch {
+      // rebuildTree has already reloaded whatever state it could
+    }
+  }, [rebuildTree]);
 
   // Collect all OIDs in the tree
   const collectAllOids = useCallback((tree: MibNode[]): Set<string> => {
@@ -308,13 +322,12 @@ export default function App() {
             <aside className="bg-white border-r border-gray-200 flex flex-col h-full">
               <div className="p-4 border-b border-gray-200">
                 <h2 className="text-lg font-semibold text-gray-800 mb-4">Saved MIBs</h2>
-                <FileUploader onUpload={handleUpload} onUploadFromText={uploadMibFromText} onReload={reload} onNotification={addNotification} />
+                <FileUploader onUpload={handleUpload} onUploadFromText={uploadMibFromText} onReload={handleUploadRecovery} onNotification={addNotification} />
               </div>
 
               <div className="flex-1 overflow-y-auto">
                 <SavedMibsList
                   mibs={mibs}
-                  activeMibId={null}
                   onSelect={setViewingMib}
                   onDelete={handleDeleteMib}
                   onBulkDelete={handleBulkDelete}
@@ -346,7 +359,7 @@ export default function App() {
                     <span className="text-sm text-gray-500">
                       {notificationsOnly
                         ? `${notificationCount} trap${notificationCount !== 1 ? 's' : ''}`
-                        : `${mibs.length} files / ${mergedTree.length} root nodes`}
+                        : `${mibs.length} file${mibs.length !== 1 ? 's' : ''} / ${mergedTree.length} root node${mergedTree.length !== 1 ? 's' : ''}`}
                     </span>
                   )}
                 </div>
