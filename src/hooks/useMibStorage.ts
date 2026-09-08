@@ -292,13 +292,22 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       }
 
       await saveMibs(validMibs);
-      await loadData();
+
+      // The stored tree still describes the MIBs that were here before the
+      // import, so reloading it would show the new files in the list without
+      // any of their nodes in the tree
+      try {
+        await rebuildAllTrees();
+      } catch (error) {
+        console.error('Failed to rebuild after import:', error);
+        await loadData();
+      }
       return true;
     } catch (error) {
       console.error('Failed to import data:', error);
       return false;
     }
-  }, [loadData]);
+  }, [loadData, rebuildAllTrees]);
 
   // Upload MIB from text content
   const uploadMibFromText = useCallback(async (content: string, fileName: string, skipReload = false): Promise<UploadResult> => {

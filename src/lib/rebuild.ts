@@ -92,7 +92,6 @@ export async function runRebuild(
 
   // Resolve every file to a parsed module, reusing unchanged parses
   const missingContentIds: string[] = [];
-  const moduleByFileName = new Map<string, ParsedModule>();
   const allModules: ParsedModule[] = [];
 
   for (const mib of mibs) {
@@ -104,13 +103,11 @@ export async function runRebuild(
         continue;
       }
       allModules.push(cached.module);
-      moduleByFileName.set(mib.fileName, cached.module);
       continue;
     }
 
     if (cached && cached.content === mib.content) {
       allModules.push(cached.module);
-      moduleByFileName.set(mib.fileName, cached.module);
       continue;
     }
 
@@ -118,7 +115,6 @@ export async function runRebuild(
       const module = parseMibModule(mib.content, mib.fileName);
       parseCache.set(mib.id, { content: mib.content, module });
       allModules.push(module);
-      moduleByFileName.set(mib.fileName, module);
     } catch (error) {
       // The file name is passed as its own argument, not interpolated into
       // the first one: console.* treats that as a format string, and the name
@@ -128,7 +124,11 @@ export async function runRebuild(
   }
 
   if (missingContentIds.length > 0) {
-    return {
+    // Reported through onResult as well: the caller decides what to do with a
+    // result carrying missingContentIds (it resends with content rather than
+    // publishing it), and without this it would only ever see the empty
+    // fallback result and treat the empty tree as the answer.
+    const incomplete: RebuildResult = {
       ok: false,
       tree: [],
       files: [],
@@ -136,6 +136,8 @@ export async function runRebuild(
       cachedIds: getCachedIds(),
       missingContentIds,
     };
+    onResult?.(incomplete);
+    return incomplete;
   }
 
   const mibsById = new Map(mibs.map(mib => [mib.id, mib]));

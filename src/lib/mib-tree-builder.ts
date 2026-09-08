@@ -24,6 +24,13 @@ export class MibTreeBuilder {
   // Seed node lookup by name (avoids a linear scan per parent resolution)
   private seedMap: Map<string, TreeBuildNode>;
 
+  // Nodes that were merged into an equivalent node, and what they became.
+  // A module that re-declares an anchor another module already declared gets
+  // its duplicate merged away; anything still resolving to the duplicate has
+  // to follow it to the survivor, or it would be linked under a node that is
+  // no longer part of the tree and disappear.
+  private mergedInto: Map<TreeBuildNode, TreeBuildNode>;
+
   // Per-parent index of "name|subid" -> child node.
   // Lets parent linking detect duplicate children in O(1) instead of scanning
   // the whole children array, which is quadratic for parents with many
@@ -38,6 +45,7 @@ export class MibTreeBuilder {
     this.seedNodes = [];
     this.seedMap = new Map();
     this.childIndex = new Map();
+    this.mergedInto = new Map();
     this.registerSeedNodes();
   }
 
@@ -206,10 +214,30 @@ export class MibTreeBuilder {
   }
 
   /**
+   * Follow a node that was merged away to the node it was merged into
+   */
+  private resolveMerged(node: TreeBuildNode): TreeBuildNode {
+    let current = node;
+    // Merges form a chain, never a cycle: a node is only ever merged into one
+    // that is already in the tree. The bound is belt and braces.
+    for (let hops = 0; hops < 100; hops++) {
+      const next = this.mergedInto.get(current);
+      if (!next) break;
+      current = next;
+    }
+    return current;
+  }
+
+  /**
    * Link a node under a parent, merging into an existing duplicate if the
    * parent already has a child with the same name and subid.
    */
   private attachChild(parent: TreeBuildNode, node: TreeBuildNode): void {
+    parent = this.resolveMerged(parent);
+    node = this.resolveMerged(node);
+
+    if (parent === node) return;
+
     const index = this.getChildIndex(parent);
     const key = this.childKey(node);
     const existing = index.get(key);
@@ -226,16 +254,17 @@ export class MibTreeBuilder {
       return;
     }
 
-    // Merge: copy children from this node to the existing duplicate
-    const existingIndex = this.getChildIndex(existing);
-    node.children.forEach(grandChild => {
-      const grandChildNode = grandChild as TreeBuildNode;
-      const grandChildKey = this.childKey(grandChildNode);
-      if (!existingIndex.has(grandChildKey)) {
-        existing.children.push(grandChild);
-        existingIndex.set(grandChildKey, grandChildNode);
-      }
-    });
+    // Merge this node into the existing duplicate, and remember the
+    // redirection so later lookups of the duplicate find the survivor
+    this.mergedInto.set(node, existing);
+
+    const grandChildren = node.children as TreeBuildNode[];
+    node.children = [];
+    this.childIndex.delete(node);
+
+    // Re-attach through this same method so a grandchild that also duplicates
+    // one of the survivor's children merges rather than being dropped
+    grandChildren.forEach(grandChild => this.attachChild(existing, grandChild));
   }
 
   /**

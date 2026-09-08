@@ -265,6 +265,10 @@ child by `"name|subid"` and consults the parent's `childIndex`:
 
 ```typescript
 function attachChild(parent: TreeBuildNode, node: TreeBuildNode): void {
+  parent = resolveMerged(parent);            // both ends may have been merged
+  node = resolveMerged(node);                // away by an earlier duplicate
+  if (parent === node) return;
+
   const index = getChildIndex(parent);       // built lazily, then kept in sync
   const key = childKey(node);                // `${name}|${subid}`
   const existing = index.get(key);
@@ -278,22 +282,27 @@ function attachChild(parent: TreeBuildNode, node: TreeBuildNode): void {
 
   if (existing === node) return;             // already linked
 
-  // Duplicate definition - fold this node's children into the existing one,
-  // skipping grandchildren the existing node already has
-  const existingIndex = getChildIndex(existing);
-  for (const grandChild of node.children) {
-    const grandChildKey = childKey(grandChild);
-    if (!existingIndex.has(grandChildKey)) {
-      existing.children.push(grandChild);
-      existingIndex.set(grandChildKey, grandChild);
-    }
-  }
+  // Duplicate definition - record where this node went, then re-attach its
+  // children through the same method so a duplicated branch merges all the
+  // way down rather than stopping at the first collision
+  mergedInto.set(node, existing);
+  const grandChildren = node.children;
+  node.children = [];
+  for (const grandChild of grandChildren) attachChild(existing, grandChild);
 }
 ```
 
 The duplicate node itself is dropped from the tree; whichever definition was
 linked first wins. The **files** are still compared afterwards and reported as
 conflicts — see [Conflict Detection](#conflict-detection).
+
+`mergedInto` is what keeps the merge from losing nodes. Pass 2 walks the symbol
+map in order, so a module's own objects are usually linked *after* its copy of
+a shared anchor has already been merged away — `resolveParent()` still finds
+that discarded duplicate in the symbol map, and without the redirection those
+objects would be linked under a node that is no longer part of the tree and
+vanish. In practice that meant a vendor MIB set where every file re-declares
+the same anchor kept only whichever file was loaded first.
 
 `childKey()` distinguishes an array subid from a numeric one (`a3011.7124` vs
 `n12`) so that `[1, 2]` and `12` cannot collide.
@@ -971,6 +980,7 @@ function detectConflicts(mibs: Mib[], flatTree: MibNode[]): Map<string, Conflict
 | `pass3_computeOids()` | `mib-tree-builder.ts` | Calculate absolute OIDs |
 | `resolveParent()` | `mib-tree-builder.ts` | Find a parent, with fallbacks |
 | `attachChild()` | `mib-tree-builder.ts` | Link a child, merging duplicates |
+| `resolveMerged()` | `mib-tree-builder.ts` | Follow a merged-away node to its survivor |
 | `detectMissingMibs()` | `mib-tree-builder.ts` | Name the MIBs the orphans need |
 | `registerSeedNodes()` | `mib-tree-builder.ts` | Create the standard SNMP hierarchy |
 | `parseMibModule()` | `mib-parser.ts` | Parse MIB text into a `ParsedModule` |

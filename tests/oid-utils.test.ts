@@ -100,9 +100,14 @@ describe('validation and accessors', () => {
     expect(isValidOid(oid)).toBe(true);
   });
 
-  test.each(['', 'abc', '1.a.3', '1.-1'])('rejects %p', oid => {
-    expect(isValidOid(oid)).toBe(false);
-  });
+  // A malformed sub-identifier used to pass: Number('') is 0, so an empty or
+  // whitespace-only one read as a valid zero
+  test.each(['', 'abc', '1.a.3', '1.-1', '1..3', '1.', '.1.3', '1. 3', '1.3.6e2', '1.0x10'])(
+    'rejects %p',
+    oid => {
+      expect(isValidOid(oid)).toBe(false);
+    }
+  );
 
   test('getLastOidNumber returns the final sub-identifier', () => {
     expect(getLastOidNumber('1.3.6.1.4.1.99999')).toBe(99999);

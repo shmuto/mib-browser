@@ -21,6 +21,11 @@ let worker: Worker | null = null;
 let workerUnavailable = false;
 let nextRequestId = 1;
 
+// Requests posted to the worker that have not settled yet. A worker that dies
+// mid-request answers nothing, so without this the rebuild promise never
+// settles and the UI waits on it forever.
+const pendingRequests = new Map<number, (error: Error) => void>();
+
 // Ids whose content the worker has already parsed and cached
 let idsKnownToWorker = new Set<string>();
 
@@ -48,10 +53,15 @@ function getWorker(): Worker | null {
   }
 }
 
-function resetWorker(): void {
+function resetWorker(reason = 'The rebuild worker stopped unexpectedly'): void {
   worker?.terminate();
   worker = null;
   idsKnownToWorker = new Set();
+
+  // Fail everything that was waiting on the worker we just dropped
+  const waiting = Array.from(pendingRequests.values());
+  pendingRequests.clear();
+  waiting.forEach(fail => fail(new Error(reason)));
 }
 
 /**
@@ -90,7 +100,13 @@ function postRebuild(
 
     const cleanup = () => {
       activeWorker.removeEventListener('message', handler);
+      pendingRequests.delete(requestId);
     };
+
+    pendingRequests.set(requestId, error => {
+      activeWorker.removeEventListener('message', handler);
+      reject(error);
+    });
 
     const handler = (event: MessageEvent<RebuildResponse>) => {
       const message = event.data;
@@ -146,7 +162,15 @@ export async function requestRebuild(
 
   pendingPrimes.clear();
 
-  let result = await postRebuild(activeWorker, toInput(mibs, false), onResult);
+  let result: RebuildResult;
+  try {
+    result = await postRebuild(activeWorker, toInput(mibs, false), onResult);
+  } catch (error) {
+    // The worker died mid-request. Its cache died with it, so finish the job
+    // on this thread rather than leaving the caller with nothing.
+    console.warn('Rebuild worker failed, running on the main thread:', error);
+    return runRebuild({ mibs: toInput(mibs, true) }, onResult);
+  }
 
   // The worker lost a cache entry we thought it had - resend everything once
   if (result.missingContentIds?.length) {

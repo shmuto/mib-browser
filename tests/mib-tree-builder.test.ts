@@ -231,3 +231,71 @@ describe('builder contract', () => {
     expect(nodes.get('enterprises')?.oid).toBe('1.3.6.1.4.1');
   });
 });
+
+// Vendor MIB sets routinely re-declare a shared anchor in every file rather
+// than importing it. The duplicate is merged away, and anything still
+// resolving to it has to follow the merge - otherwise whichever module was
+// loaded second lost everything hanging off the anchor.
+describe('MibTreeBuilder: modules that re-declare a shared anchor', () => {
+  const SHARE_A = `SHARE-A-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, enterprises FROM SNMPv2-SMI;
+sharedRoot OBJECT IDENTIFIER ::= { enterprises 99001 }
+aLeaf OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "a"
+    ::= { sharedRoot 1 }
+END`;
+
+  const SHARE_B = `SHARE-B-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, enterprises FROM SNMPv2-SMI;
+sharedRoot OBJECT IDENTIFIER ::= { enterprises 99001 }
+bLeaf OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "b"
+    ::= { sharedRoot 2 }
+END`;
+
+  test('keeps both modules\' objects, whichever order they load in', () => {
+    for (const order of [[SHARE_A, SHARE_B], [SHARE_B, SHARE_A]]) {
+      const nodes = byName(build(order.map((c, i) => parse(c, `s${i}.txt`))));
+
+      expect(nodes.get('sharedRoot')?.oid).toBe('1.3.6.1.4.1.99001');
+      expect(nodes.get('aLeaf')?.oid).toBe('1.3.6.1.4.1.99001.1');
+      expect(nodes.get('bLeaf')?.oid).toBe('1.3.6.1.4.1.99001.2');
+    }
+  });
+
+  test('declares the shared anchor once', () => {
+    const tree = build([SHARE_A, SHARE_B].map((c, i) => parse(c, `s${i}.txt`)));
+    const roots = flattenTree(tree).filter(n => n.name === 'sharedRoot');
+    expect(roots).toHaveLength(1);
+  });
+
+  // The duplicate's own subtree has to be merged in recursively, not dropped
+  // the moment its top node collides with one the survivor already has.
+  test('merges a whole duplicated branch', () => {
+    const branch = (moduleName: string, leaf: string, subid: number) => `${moduleName} DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, enterprises FROM SNMPv2-SMI;
+dupRoot OBJECT IDENTIFIER ::= { enterprises 99002 }
+dupMid OBJECT IDENTIFIER ::= { dupRoot 1 }
+${leaf} OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "leaf"
+    ::= { dupMid ${subid} }
+END`;
+
+    const nodes = byName(build([
+      parse(branch('DUP-A-MIB', 'dupLeafA', 1), 'a.txt'),
+      parse(branch('DUP-B-MIB', 'dupLeafB', 2), 'b.txt'),
+    ]));
+
+    expect(nodes.get('dupLeafA')?.oid).toBe('1.3.6.1.4.1.99002.1.1');
+    expect(nodes.get('dupLeafB')?.oid).toBe('1.3.6.1.4.1.99002.1.2');
+  });
+});

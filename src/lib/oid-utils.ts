@@ -123,13 +123,9 @@ export function getOidPath(oid: string): string[] {
 export function isValidOid(oid: string): boolean {
   if (!oid || typeof oid !== 'string') return false;
 
-  const parts = oid.split('.');
-  if (parts.length === 0) return false;
-
-  return parts.every(part => {
-    const num = Number(part);
-    return !isNaN(num) && num >= 0 && Number.isInteger(num);
-  });
+  // Every sub-identifier has to be a run of digits. Number() alone accepted an
+  // empty one ("1..3", "1.") as 0, and whitespace ("1. 3") along with it.
+  return oid.split('.').every(part => /^\d+$/.test(part));
 }
 
 /**
