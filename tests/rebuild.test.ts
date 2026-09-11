@@ -112,6 +112,9 @@ END`;
       expect(conflicts![0].differences).toEqual([
         { field: 'name', existingValue: other, newValue: own },
       ]);
+      // The kind is what stops the panel offering to delete one of two
+      // perfectly good modules
+      expect(conflicts![0].kind).toBe('oid');
     }
   });
 

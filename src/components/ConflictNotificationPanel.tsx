@@ -7,6 +7,13 @@ interface ConflictPair {
   file1: StoredMibData;
   file2: StoredMibData;
   conflicts: MibConflict[];
+  /**
+   * True when the two files declare the same module and their definitions
+   * differ - the case where keeping one of them is the answer. A pair that
+   * only shares OIDs is two different modules landing on the same branch, and
+   * deleting either of them would throw away a module the user wants.
+   */
+  sameModule: boolean;
 }
 
 interface ConflictNotificationPanelProps {
@@ -58,6 +65,9 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
             file1: otherMib,  // Existing file (corresponds to existingValue)
             file2: mib,       // New file (corresponds to newValue)
             conflicts: pairConflicts,
+            // 'kind' is absent on conflicts stored before the two were told
+            // apart, and those were all same-module ones
+            sameModule: pairConflicts.some(c => (c.kind ?? 'module') === 'module'),
           });
         }
       });
@@ -79,7 +89,9 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
               {conflictPairs.length} Conflict{conflictPairs.length > 1 ? 's' : ''} Detected
             </h3>
             <p className="text-xs text-yellow-700 mt-0.5">
-              Click to view and resolve conflicts between MIB files
+              {conflictPairs.some(pair => pair.sameModule)
+                ? 'Click a pair to see what differs between the files'
+                : 'Click a pair to see which OIDs two modules both claim'}
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
@@ -137,16 +149,27 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
 
             {/* Conflict list */}
             <div className="flex-1 overflow-y-auto p-4">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">
+              <h3 className="text-sm font-semibold text-gray-700 mb-1">
                 Conflicting OIDs ({selectedConflict.conflicts.length})
               </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                {selectedConflict.sameModule
+                  ? 'Both files declare the same module, and these definitions differ between them.'
+                  : 'These are different modules that assign different names to the same OID. Both may be correct - a node is identified by its OID, so the tree shows them together.'}
+              </p>
               <div className="space-y-3">
                 {selectedConflict.conflicts.map((conflict, index) => (
                   <div key={index} className="bg-gray-50 border border-gray-200 rounded p-3">
                     <div className="flex items-start justify-between mb-2">
                       <div>
-                        <h4 className="text-sm font-medium text-gray-900">{conflict.name}</h4>
-                        <p className="text-xs text-gray-600 mt-0.5">OID: {conflict.oid}</p>
+                        {/* For a shared OID the OID is the subject, not the name:
+                            the two files disagree about what to call it */}
+                        <h4 className="text-sm font-medium text-gray-900 font-mono">
+                          {selectedConflict.sameModule ? conflict.name : conflict.oid}
+                        </h4>
+                        <p className="text-xs text-gray-600 mt-0.5">
+                          {selectedConflict.sameModule ? `OID: ${conflict.oid}` : 'claimed by both files'}
+                        </p>
                       </div>
                     </div>
                     {conflict.differences.length > 0 && (
@@ -176,39 +199,47 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
 
             {/* Action buttons */}
             <div className="p-4 border-t border-gray-200 flex justify-between items-center bg-gray-50">
-              <p className="text-sm text-gray-600">Choose which file to keep:</p>
+              <p className="text-sm text-gray-600">
+                {selectedConflict.sameModule
+                  ? 'Choose which file to keep:'
+                  : 'Nothing to resolve: keep both unless you know one of them is wrong.'}
+              </p>
               <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    setDeleteConfirm({
-                      isOpen: true,
-                      fileId: selectedConflict.file1.id,
-                      fileName: selectedConflict.file1.fileName,
-                      keepFileName: selectedConflict.file2.fileName,
-                    });
-                  }}
-                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm font-medium"
-                >
-                  Delete {selectedConflict.file1.fileName}
-                </button>
-                <button
-                  onClick={() => {
-                    setDeleteConfirm({
-                      isOpen: true,
-                      fileId: selectedConflict.file2.id,
-                      fileName: selectedConflict.file2.fileName,
-                      keepFileName: selectedConflict.file1.fileName,
-                    });
-                  }}
-                  className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm font-medium"
-                >
-                  Delete {selectedConflict.file2.fileName}
-                </button>
+                {selectedConflict.sameModule && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setDeleteConfirm({
+                          isOpen: true,
+                          fileId: selectedConflict.file1.id,
+                          fileName: selectedConflict.file1.fileName,
+                          keepFileName: selectedConflict.file2.fileName,
+                        });
+                      }}
+                      className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm font-medium"
+                    >
+                      Delete {selectedConflict.file1.fileName}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDeleteConfirm({
+                          isOpen: true,
+                          fileId: selectedConflict.file2.id,
+                          fileName: selectedConflict.file2.fileName,
+                          keepFileName: selectedConflict.file1.fileName,
+                        });
+                      }}
+                      className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm font-medium"
+                    >
+                      Delete {selectedConflict.file2.fileName}
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={() => setSelectedConflict(null)}
                   className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition-colors text-sm font-medium"
                 >
-                  Cancel
+                  {selectedConflict.sameModule ? 'Cancel' : 'Close'}
                 </button>
               </div>
             </div>

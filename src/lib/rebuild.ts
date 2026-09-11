@@ -296,6 +296,7 @@ export async function runRebuild(
         if (other.name === node.name) continue; // The same definition, not a collision
 
         const conflict: MibConflict = {
+          kind: 'oid',
           oid,
           name: node.name,
           existingFile: other.fileName!,
@@ -382,6 +383,7 @@ export async function runRebuild(
             if (differences.length > 0) {
               const treeNode = nodeByModuleAndName.get(`${moduleName}::${name}`);
               conflicts.push({
+                kind: 'module',
                 oid: treeNode?.oid || 'unknown',
                 name,
                 existingFile: otherMib.fileName,

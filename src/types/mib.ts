@@ -39,6 +39,14 @@ export interface StorageInfo {
 
 // Conflict information when uploading MIB files
 export interface MibConflict {
+  /**
+   * What kind of disagreement this is:
+   *  - 'module': two files declare the same module, and an object differs
+   *  - 'oid':    two different modules put different names on one OID
+   * Absent on conflicts recorded before the distinction existed; those are
+   * all of the first kind.
+   */
+  kind?: 'module' | 'oid';
   oid: string;
   name: string;
   existingFile: string;
