@@ -1,10 +1,55 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
     <title>SNMP MIB Browser</title>
+    <meta
+      name="description"
+      content="Load a pile of MIB files and get one merged OID tree. Search, browse traps and read node details in your browser - no server, no upload, no account."
+    />
+
+    <!-- SVG for browsers that take it, PNG for the ones that do not -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="96x96" href="/favicon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#2563eb" />
+
+    <!--
+      Link previews (Slack, Discord, Teams, iMessage, Mastodon, ...). These URLs
+      have to be absolute - a relative one gives an unfurl with no image - so
+      they name the deployed site. A fork that publishes elsewhere wants its own
+      address here, and public/og-image.png regenerated from scripts/og-image.html.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SNMP MIB Browser" />
+    <meta property="og:url" content="https://shmuto.github.io/mib-browser/" />
+    <meta property="og:title" content="SNMP MIB Browser" />
+    <meta
+      property="og:description"
+      content="Load a pile of MIB files and get one merged OID tree. Search, browse traps and read node details in your browser - no server, no upload, no account."
+    />
+    <meta property="og:image" content="https://shmuto.github.io/mib-browser/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="SNMP MIB Browser: a merged OID tree with two traps under an enterprise node."
+    />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SNMP MIB Browser" />
+    <meta
+      name="twitter:description"
+      content="Load a pile of MIB files and get one merged OID tree. Runs entirely in your browser."
+    />
+    <meta name="twitter:image" content="https://shmuto.github.io/mib-browser/og-image.png" />
+    <meta
+      name="twitter:image:alt"
+      content="SNMP MIB Browser: a merged OID tree with two traps under an enterprise node."
+    />
   </head>
   <body>
     <div id="root"></div>
