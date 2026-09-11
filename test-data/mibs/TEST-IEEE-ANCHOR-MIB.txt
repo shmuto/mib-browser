@@ -1,0 +1,52 @@
+TEST-IEEE-ANCHOR-MIB DEFINITIONS ::= BEGIN
+
+-- The shape IEEE modules are written in, and the one that sent
+-- IEEE8021-SECY-MIB's 185 definitions out of the tree in silence.
+--
+-- Three things here are awkward at once:
+--   * the module anchors itself at a root arc written as `iso(1)`, in the
+--     named-number form the sub-identifiers use, rather than at a node
+--     another module defines;
+--   * `member-body` is a descriptor with a hyphen in it, and so is the leaf;
+--   * the description of ieeeAnchorNote quotes a definition, which is prose
+--     and not a definition of its own.
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32
+        FROM SNMPv2-SMI;
+
+testIeeeAnchorMIB MODULE-IDENTITY
+    LAST-UPDATED "202601010000Z"
+    ORGANIZATION "MIB Browser Test Data"
+    CONTACT-INFO
+        "https://github.com/shmuto/mib-browser"
+    DESCRIPTION
+        "Anchored the way IEEE 802.1 modules are: under the iso root arc,
+         through std(0) and iso8802(8802), with no intermediate node
+         defined for either of them."
+    ::= { iso(1) std(0) iso8802(8802) ieee802dot1(1)
+          ieee802dot1mibs(1) 99999 }
+
+member-body OBJECT IDENTIFIER ::= { iso 2 }
+
+ieee-anchor-leaf OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "A leaf whose name, like its parent's, contains hyphens."
+    ::= { testIeeeAnchorMIB 1 }
+
+ieeeAnchorNote OBJECT-TYPE
+    SYNTAX      OBJECT IDENTIFIER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION
+        "Documents the null identifier the way IF-MIB documents its own:
+
+             noTest  OBJECT IDENTIFIER ::= { 0 0 }
+
+         The example above is prose. This object is assigned below, and it
+         is that assignment that counts."
+    ::= { testIeeeAnchorMIB 2 }
+
+END

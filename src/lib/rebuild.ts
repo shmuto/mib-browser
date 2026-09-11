@@ -323,7 +323,7 @@ export async function runRebuild(
   }
 
   const describeUnplaced = (orphans: typeof unresolved): string => {
-    const anchors = Array.from(new Set(orphans.map(orphan => orphan.parentName).filter(Boolean)));
+    const anchors = Array.from(new Set(orphans.map(orphan => orphan.missingAnchor).filter(Boolean)));
     const shown = anchors.slice(0, 3).join(', ');
     const rest = anchors.length > 3 ? `, and ${anchors.length - 3} more` : '';
     const count = orphans.length === 1 ? '1 definition' : `${orphans.length} definitions`;

@@ -215,6 +215,109 @@ function removeComments(content: string): string {
 }
 
 /**
+ * Blank out `<NAME> MACRO ::= BEGIN ... END` blocks, keeping the newlines and
+ * the length of the text.
+ *
+ * The SMI modules everyone loads - SNMPv2-SMI, SNMPv2-TC, SNMPv2-CONF,
+ * RFC-1212, RFC-1215 - define the macros the other modules are written in, and
+ * those definitions are not definitions of objects. Their bodies are full of
+ * the same keywords real definitions use, and the declaration line pairs a
+ * keyword with whatever word precedes it: in SNMPv2-SMI the `END` of one macro
+ * sits above `OBJECT-IDENTITY MACRO ::=`, which was read as an object called
+ * END whose assignment was the `::= { 0 0 }` of `zeroDotZero`, thirty lines
+ * further down - inventing one node and swallowing another.
+ *
+ * @param content Text with comments already removed
+ * @returns Text of the same length with macro bodies replaced by spaces
+ */
+function blankMacroDefinitions(content: string): string {
+  if (!/\bMACRO\b/.test(content)) return content;
+
+  const declaration = /^[ \t]*[A-Za-z][\w-]*[ \t]+MACRO[ \t]*::=/gim;
+  let result = '';
+  let copiedFrom = 0;
+  let match;
+
+  while ((match = declaration.exec(content)) !== null) {
+    // The body runs to the END that closes the macro. ASN.1 macros do not nest,
+    // so the first one after the declaration is the right one.
+    const end = content.slice(match.index).search(/\bEND\b/);
+    if (end === -1) break;
+
+    const stop = match.index + end + 3;
+    result += content.slice(copiedFrom, match.index);
+    result += blankText(content.slice(match.index, stop));
+    copiedFrom = stop;
+    declaration.lastIndex = stop;
+  }
+
+  return copiedFrom === 0 ? content : result + content.slice(copiedFrom);
+}
+
+/**
+ * Blank out the contents of every string literal, keeping the quotes, the
+ * newlines and the length of the text.
+ *
+ * MIB descriptions quote example definitions - IF-MIB's `ifTestType` explains
+ * itself with `noTest OBJECT IDENTIFIER ::= { 0 0 }` in the middle of a
+ * sentence - and a pattern scanning the raw file reads those as definitions of
+ * their own. Masking lets the same patterns run without seeing into strings,
+ * and because the length is preserved, a match found in the masked copy maps
+ * back to the real text by index, which is where the DESCRIPTION it belongs to
+ * is read from.
+ *
+ * @param content Text with comments already removed
+ * @returns Text of the same length with string contents replaced by spaces
+ */
+function maskStringLiterals(content: string): string {
+  // Unbalanced quotes: masking would blank the rest of the file
+  if (!hasBalancedQuotes(content)) return content;
+
+  let result = '';
+  let copiedFrom = 0;
+  let stringStart = -1;
+
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) !== 34 /* " */) continue;
+
+    if (stringStart === -1) {
+      stringStart = i;
+      continue;
+    }
+
+    // Closing quote: copy up to and including the opening one, then blank the
+    // body, leaving its newlines where they are
+    result += content.slice(copiedFrom, stringStart + 1);
+    result += blankText(content.slice(stringStart + 1, i));
+    copiedFrom = i;
+    stringStart = -1;
+  }
+
+  return copiedFrom === 0 ? content : result + content.slice(copiedFrom);
+}
+
+// Spaces to blank text with, grown as needed. Blanking a megabyte of
+// descriptions a character at a time through a regex is most of what masking
+// would otherwise cost.
+let spacePad = ' '.repeat(256);
+
+function spaces(length: number): string {
+  while (spacePad.length < length) spacePad += spacePad;
+  return spacePad.slice(0, length);
+}
+
+/**
+ * Replace every character with a space, except the newlines
+ */
+function blankText(text: string): string {
+  if (!text.includes('\n')) return spaces(text.length);
+
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) lines[i] = spaces(lines[i].length);
+  return lines.join('\n');
+}
+
+/**
  * Locate the module's IMPORTS clause: the keyword through the semicolon that
  * ends it.
  *
@@ -269,8 +372,8 @@ const HAS_TRAP_TYPE = /TRAP-TYPE/i;
 /**
  * Extract OBJECT-TYPE definitions
  */
-function extractObjectTypes(content: string): string[] {
-  const objectTypes: string[] = [];
+function extractObjectTypes(content: string): Array<{ text: string; start: number; end: number }> {
+  const objectTypes: Array<{ text: string; start: number; end: number }> = [];
 
   // OBJECT-TYPE blocks can contain nested braces (e.g., INDEX { ifIndex })
   // We need to carefully track braces to handle nested structures.
@@ -280,6 +383,8 @@ function extractObjectTypes(content: string): string[] {
   const trackStrings = hasBalancedQuotes(content);
   const lines = content.split('\n');
   let currentBlock = '';
+  let blockStart = 0;
+  let lineStart = 0;
   let inObjectType = false;
   let sawAssignment = false;
   let braceOpened = false;
@@ -291,12 +396,13 @@ function extractObjectTypes(content: string): string[] {
 
     // Check for start of new OBJECT-TYPE (only when not already in one, and
     // not in the middle of a string literal)
-    if (!inObjectType && !inString && /^\s*\w+\s+OBJECT-TYPE/i.test(line)) {
+    if (!inObjectType && !inString && /^[ \t]*[A-Za-z][\w-]*[ \t]+OBJECT-TYPE/i.test(line)) {
       inObjectType = true;
       sawAssignment = false;
       braceOpened = false;
       braceDepth = 0;
       currentBlock = line + '\n';
+      blockStart = lineStart;
     } else if (inObjectType) {
       currentBlock += line + '\n';
     }
@@ -340,12 +446,18 @@ function extractObjectTypes(content: string): string[] {
 
     // If the assignment's braces are balanced again, we're done
     if (inObjectType && sawAssignment && braceOpened && braceDepth === 0) {
-      objectTypes.push(currentBlock.trim());
+      objectTypes.push({
+        text: currentBlock,
+        start: blockStart,
+        end: lineStart + line.length + 1,
+      });
       inObjectType = false;
       currentBlock = '';
       sawAssignment = false;
       braceOpened = false;
     }
+
+    lineStart += line.length + 1;
   }
 
   return objectTypes;
@@ -355,7 +467,13 @@ function extractObjectTypes(content: string): string[] {
  * The clauses that can follow SYNTAX in an OBJECT-TYPE or a TEXTUAL-CONVENTION.
  * Sticky, so it is tested at one position rather than searched for.
  */
-const SYNTAX_TERMINATOR = /(?:UNITS|MAX-ACCESS|ACCESS|STATUS|DESCRIPTION|REFERENCE|DISPLAY-HINT|INDEX|AUGMENTS|DEFVAL|::=)\b/iy;
+// `\b` belongs to the words only: after `::=` comes whitespace, and there is no
+// word boundary between `=` and a space - so with the boundary applied to the
+// whole group, an assignment never ended the clause. A TEXTUAL-CONVENTION whose
+// SYNTAX is its last clause then ran on into whatever followed the definition.
+// `END` closes the module, so nothing can span it either.
+const SYNTAX_TERMINATOR =
+  /(?:(?:UNITS|MAX-ACCESS|ACCESS|STATUS|DESCRIPTION|REFERENCE|DISPLAY-HINT|INDEX|AUGMENTS|DEFVAL|END)\b|::=)/iy;
 
 /**
  * Extract the SYNTAX clause of a definition.
@@ -453,22 +571,41 @@ export function parseSyntaxValues(syntaxRaw: string): {
 /**
  * Extract TEXTUAL-CONVENTION definitions from MIB content
  */
-function extractTextualConventions(content: string): import('../types/mib').TextualConvention[] {
+function extractTextualConventions(
+  content: string,
+  masked: string
+): import('../types/mib').TextualConvention[] {
   const conventions: import('../types/mib').TextualConvention[] = [];
 
   // Most MIB modules define no TEXTUAL-CONVENTIONs; skip the scan entirely
-  if (!containsKeyword(content, HAS_TEXTUAL_CONVENTION)) return conventions;
+  if (!containsKeyword(masked, HAS_TEXTUAL_CONVENTION)) return conventions;
 
   // Pattern: name ::= TEXTUAL-CONVENTION ... SYNTAX ...
-  const pattern = /(\w+)\s*::=\s*TEXTUAL-CONVENTION([\s\S]*?)(?=\n\s*\w+\s*(?:::=|OBJECT-TYPE|OBJECT-IDENTITY|MODULE-IDENTITY|NOTIFICATION-TYPE)|$)/gi;
+  // The body runs to whatever definition comes next. The list is the set of
+  // constructs a module can open with: without OBJECT IDENTIFIER in it,
+  // SNMP-FRAMEWORK-MIB's last convention ran on through the four assignments
+  // that follow it.
+  // ...but a clause of the convention itself is not the next definition:
+  // `SYNTAX OBJECT IDENTIFIER` is the line five of SNMPv2-TC's conventions end
+  // on, and reading it as one cut the body before its own SYNTAX and dropped
+  // the convention entirely.
+  const pattern =
+    /([A-Za-z][\w-]*)\s*::=\s*TEXTUAL-CONVENTION([\s\S]*?)(?=\n[ \t]*(?!SYNTAX\b|STATUS\b|DESCRIPTION\b|DISPLAY-HINT\b|REFERENCE\b|UNITS\b)[A-Za-z][\w-]*[ \t\r\n]*(?:::=|OBJECT[ \t]+IDENTIFIER|OBJECT-TYPE|OBJECT-IDENTITY|MODULE-IDENTITY|NOTIFICATION-TYPE|OBJECT-GROUP|NOTIFICATION-GROUP|MODULE-COMPLIANCE|TRAP-TYPE|AGENT-CAPABILITIES|MACRO)|$)/gi;
 
   let match;
-  while ((match = pattern.exec(content)) !== null) {
+  while ((match = pattern.exec(masked)) !== null) {
     const name = match[1];
-    const body = match[2];
+    const bodyStart = match.index + match[0].length - match[2].length;
+    const bodyEnd = match.index + match[0].length;
+    // Two views of the same body: the real text holds the DESCRIPTION and the
+    // DISPLAY-HINT, which live inside string literals, while the clause search
+    // runs on the masked one - a description explaining what a SYNTAX clause
+    // does would otherwise be read as the SYNTAX clause.
+    const body = content.slice(bodyStart, bodyEnd);
+    const maskedBody = masked.slice(bodyStart, bodyEnd);
 
     // Extract STATUS
-    const statusMatch = body.match(/STATUS\s+([\w-]+)/i);
+    const statusMatch = maskedBody.match(/STATUS\s+([\w-]+)/i);
     const status = statusMatch ? statusMatch[1].trim() : undefined;
 
     // Extract DISPLAY-HINT
@@ -479,8 +616,9 @@ function extractTextualConventions(content: string): import('../types/mib').Text
     const descMatch = body.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : undefined;
 
-    // Extract SYNTAX with possible enum values or ranges
-    const syntaxRaw = extractSyntaxClause(body);
+    // Extract SYNTAX with possible enum values or ranges. The clause itself is
+    // never inside a string, so the masked copy carries it verbatim.
+    const syntaxRaw = extractSyntaxClause(maskedBody);
     if (!syntaxRaw) continue;
 
     const { syntax, enumValues, ranges } = parseSyntaxValues(syntaxRaw);
@@ -698,12 +836,17 @@ export function parseMibModule(content: string, fileName?: string): import('../t
   // Remove IMPORTS block to prevent parsing interference
   const cleanedWithoutImports = removeImportsClause(cleanedContent);
 
+  // One masked copy for every definition scan: same text, same length, with
+  // the macro definitions and the contents of string literals blanked out
+  const masked = maskStringLiterals(blankMacroDefinitions(cleanedWithoutImports));
+
   // Extract OID assignments (OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY)
   // Pass empty map to prevent OID resolution
-  const oidAssignments = extractOidAssignmentsRaw(cleanedWithoutImports);
+  const oidAssignments = extractOidAssignmentsRaw(cleanedWithoutImports, masked);
 
   // Extract OBJECT-TYPE definitions
   const objectTypes = extractObjectTypes(cleanedWithoutImports);
+
 
   const objects: import('../types/mib').RawMibObject[] = [];
 
@@ -722,8 +865,8 @@ export function parseMibModule(content: string, fileName?: string): import('../t
   });
 
   // Add OBJECT-TYPEs
-  objectTypes.forEach(objType => {
-    const parsed = parseObjectTypeRaw(objType);
+  objectTypes.forEach(block => {
+    const parsed = parseObjectTypeRaw(block.text, masked.slice(block.start, block.end));
     if (parsed) {
       objects.push({
         ...parsed,
@@ -733,7 +876,7 @@ export function parseMibModule(content: string, fileName?: string): import('../t
   });
 
   // Add SMIv1 TRAP-TYPEs
-  extractTrapTypes(cleanedWithoutImports).forEach(trap => {
+  extractTrapTypes(cleanedWithoutImports, masked).forEach(trap => {
     objects.push({
       ...trap,
       fileName,
@@ -741,7 +884,7 @@ export function parseMibModule(content: string, fileName?: string): import('../t
   });
 
   // Extract TEXTUAL-CONVENTIONs
-  const textualConventions = extractTextualConventions(cleanedWithoutImports);
+  const textualConventions = extractTextualConventions(cleanedWithoutImports, masked);
 
   return {
     moduleName: mibName,
@@ -766,7 +909,13 @@ function parseOidBlock(blockContent: string): { parent: string; subids: number[]
   const parts = inner.split(/\s+/).filter(p => p.length > 0);
   if (parts.length < 2) return null;
 
-  const parent = parts[0];
+  // The first element names the node the rest hangs off, and it may be written
+  // in the named-number form the sub-identifiers use - IEEE modules anchor
+  // themselves with `::= { iso(1) std(0) iso8802(8802) ... }`. Taking that
+  // whole spelling as the name looks for a node called "iso(1)", which nothing
+  // defines, and the module's entire subtree goes with it.
+  const parentNamed = parts[0].match(/^([A-Za-z][\w-]*)\(\d+\)$/);
+  const parent = parentNamed ? parentNamed[1] : parts[0];
   const subids: number[] = [];
 
   // Process remaining parts
@@ -793,24 +942,33 @@ function parseOidBlock(blockContent: string): { parent: string; subids: number[]
  * Returns parent name and SubIDs as-is
  */
 function extractOidAssignmentsRaw(
-  content: string
+  content: string,
+  masked: string
 ): Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string; status?: string; variables?: string[] }> {
   const assignments: Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string; status?: string; variables?: string[] }> = [];
 
+  // Every pattern below runs against `masked`, where the contents of string
+  // literals are blanked out, so a definition quoted inside a DESCRIPTION is
+  // not read as one. The two are the same length, so a match maps back to the
+  // real text by index - which is how the DESCRIPTION of a real definition is
+  // still read.
+  const slice = (match: RegExpExecArray): string =>
+    content.slice(match.index, match.index + match[0].length);
+
   // Skip whole-file scans for constructs this module does not use at all
-  const hasModuleIdentity = containsKeyword(content, HAS_MODULE_IDENTITY);
-  const hasObjectIdentity = containsKeyword(content, HAS_OBJECT_IDENTITY);
-  const hasNotificationType = containsKeyword(content, HAS_NOTIFICATION_TYPE);
-  const hasModuleCompliance = containsKeyword(content, HAS_MODULE_COMPLIANCE);
-  const hasObjectGroup = containsKeyword(content, HAS_OBJECT_GROUP);
-  const hasNotificationGroup = containsKeyword(content, HAS_NOTIFICATION_GROUP);
+  const hasModuleIdentity = containsKeyword(masked, HAS_MODULE_IDENTITY);
+  const hasObjectIdentity = containsKeyword(masked, HAS_OBJECT_IDENTITY);
+  const hasNotificationType = containsKeyword(masked, HAS_NOTIFICATION_TYPE);
+  const hasModuleCompliance = containsKeyword(masked, HAS_MODULE_COMPLIANCE);
+  const hasObjectGroup = containsKeyword(masked, HAS_OBJECT_GROUP);
+  const hasNotificationGroup = containsKeyword(masked, HAS_NOTIFICATION_GROUP);
 
   // Pattern 1: identifier OBJECT IDENTIFIER ::= { ... }
   // Now supports both simple and named number formats
-  const pattern1 = /(\w+)\s+OBJECT\s+IDENTIFIER\s*::=\s*(\{[^}]+\})/gi;
+  const pattern1 = /([A-Za-z][\w-]*)\s+OBJECT\s+IDENTIFIER\s*::=\s*(\{[^}]+\})/gi;
 
   let match;
-  while ((match = pattern1.exec(content)) !== null) {
+  while ((match = pattern1.exec(masked)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
@@ -826,16 +984,16 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 2: identifier MODULE-IDENTITY ... ::= { ... }
-  const pattern2 = /^[ \t]*(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern2 = /^[ \t]*([A-Za-z][\w-]*)\s+MODULE-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while (hasModuleIdentity && (match = pattern2.exec(content)) !== null) {
+  while (hasModuleIdentity && (match = pattern2.exec(masked)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
     const parsed = parseOidBlock(match[2]);
     if (!parsed) continue;
 
-    const fullMatch = match[0];
+    const fullMatch = slice(match);
     const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
 
@@ -849,16 +1007,16 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 3: identifier OBJECT-IDENTITY ... ::= { ... }
-  const pattern3 = /^[ \t]*(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern3 = /^[ \t]*([A-Za-z][\w-]*)\s+OBJECT-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while (hasObjectIdentity && (match = pattern3.exec(content)) !== null) {
+  while (hasObjectIdentity && (match = pattern3.exec(masked)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
     const parsed = parseOidBlock(match[2]);
     if (!parsed) continue;
 
-    const fullMatch = match[0];
+    const fullMatch = slice(match);
     const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
 
@@ -872,16 +1030,16 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 4: identifier NOTIFICATION-TYPE ... ::= { ... }
-  const pattern4 = /^[ \t]*(\w+)\s+NOTIFICATION-TYPE[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern4 = /^[ \t]*([A-Za-z][\w-]*)\s+NOTIFICATION-TYPE[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while (hasNotificationType && (match = pattern4.exec(content)) !== null) {
+  while (hasNotificationType && (match = pattern4.exec(masked)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
     const parsed = parseOidBlock(match[2]);
     if (!parsed) continue;
 
-    const fullMatch = match[0];
+    const fullMatch = slice(match);
     const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
 
@@ -904,16 +1062,16 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 5: identifier MODULE-COMPLIANCE ... ::= { ... }
-  const pattern5 = /^[ \t]*(\w+)\s+MODULE-COMPLIANCE[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern5 = /^[ \t]*([A-Za-z][\w-]*)\s+MODULE-COMPLIANCE[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while (hasModuleCompliance && (match = pattern5.exec(content)) !== null) {
+  while (hasModuleCompliance && (match = pattern5.exec(masked)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
     const parsed = parseOidBlock(match[2]);
     if (!parsed) continue;
 
-    const fullMatch = match[0];
+    const fullMatch = slice(match);
     const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
 
@@ -931,16 +1089,16 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 6: identifier OBJECT-GROUP ... ::= { ... }
-  const pattern6 = /^[ \t]*(\w+)\s+OBJECT-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern6 = /^[ \t]*([A-Za-z][\w-]*)\s+OBJECT-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while (hasObjectGroup && (match = pattern6.exec(content)) !== null) {
+  while (hasObjectGroup && (match = pattern6.exec(masked)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
     const parsed = parseOidBlock(match[2]);
     if (!parsed) continue;
 
-    const fullMatch = match[0];
+    const fullMatch = slice(match);
     const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
 
@@ -958,16 +1116,16 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 7: identifier NOTIFICATION-GROUP ... ::= { ... }
-  const pattern7 = /^[ \t]*(\w+)\s+NOTIFICATION-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern7 = /^[ \t]*([A-Za-z][\w-]*)\s+NOTIFICATION-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
-  while (hasNotificationGroup && (match = pattern7.exec(content)) !== null) {
+  while (hasNotificationGroup && (match = pattern7.exec(masked)) !== null) {
     const name = match[1];
     if (name === 'IMPORTS') continue;
 
     const parsed = parseOidBlock(match[2]);
     if (!parsed) continue;
 
-    const fullMatch = match[0];
+    const fullMatch = slice(match);
     const descMatch = fullMatch.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
 
@@ -1057,18 +1215,21 @@ function findTrapValue(
  * RFC 1215, is not applied: those live at a fixed OID under `snmpTraps`, which
  * a module declaring its own traps never refers to.)
  */
-function extractTrapTypes(content: string): import('../types/mib').RawMibObject[] {
+function extractTrapTypes(
+  content: string,
+  masked: string
+): import('../types/mib').RawMibObject[] {
   const traps: import('../types/mib').RawMibObject[] = [];
 
-  if (!containsKeyword(content, HAS_TRAP_TYPE)) return traps;
+  if (!containsKeyword(masked, HAS_TRAP_TYPE)) return traps;
 
   // Each definition runs from its own header line to the next one (or to the
   // end of the file), so a malformed block cannot swallow the trap after it.
-  const header = /^[ \t]*(\w+)[ \t]+TRAP-TYPE\b/gim;
+  const header = /^[ \t]*([A-Za-z][\w-]*)[ \t]+TRAP-TYPE\b/gim;
   const starts: Array<{ name: string; index: number }> = [];
 
   let match;
-  while ((match = header.exec(content)) !== null) {
+  while ((match = header.exec(masked)) !== null) {
     starts.push({ name: match[1], index: match.index });
   }
 
@@ -1081,7 +1242,7 @@ function extractTrapTypes(content: string): import('../types/mib').RawMibObject[
   for (let i = 0; i < starts.length; i++) {
     const { name, index } = starts[i];
     const end = i + 1 < starts.length ? starts[i + 1].index : content.length;
-    const block = content.slice(index, end);
+    const block = masked.slice(index, end);
 
     // ::= <specific-trap number>. A TRAP-TYPE has no braces around its value;
     // anything that does is some other construct and is left alone.
@@ -1096,7 +1257,10 @@ function extractTrapTypes(content: string): import('../types/mib').RawMibObject[
     const enterpriseMatch = clauses.match(/\bENTERPRISE\s+([\w\-]+)/i);
     if (!enterpriseMatch) continue; // Nothing to hang the trap off
 
-    const descMatch = clauses.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
+    // The clause text is masked, so the DESCRIPTION is read from the real one
+    const descMatch = content
+      .slice(index, index + clauses.length)
+      .match(/DESCRIPTION\s+"([\s\S]*?)"/i);
     const statusMatch = clauses.match(/\bSTATUS\s+([\w\-]+)/i);
 
     traps.push({
@@ -1118,38 +1282,48 @@ function extractTrapTypes(content: string): import('../types/mib').RawMibObject[
  * Parse OBJECT-TYPE definition in raw format (without OID resolution)
  * Returns parent name and SubID as-is
  */
-function parseObjectTypeRaw(content: string): import('../types/mib').RawMibObject | null {
-  const nameMatch = content.match(/^(\w+)\s+OBJECT-TYPE/);
+function parseObjectTypeRaw(
+  content: string,
+  masked: string
+): import('../types/mib').RawMibObject | null {
+  // Every clause but the DESCRIPTION is read from `masked`, the same block with
+  // the string literals blanked out. A description is free to quote an example
+  // - IF-MIB explains `ifTestType` with `noTest OBJECT IDENTIFIER ::= { 0 0 }`
+  // in the middle of a sentence - and that example sits before the real
+  // assignment, so the object took the example's parent as its own.
+  const nameMatch = masked.match(/^[ \t]*([A-Za-z][\w-]*)\s+OBJECT-TYPE/);
   if (!nameMatch) return null;
   const name = nameMatch[1];
 
   // Extract SYNTAX. Kept whole - an enumeration or a size constraint is part
   // of the type, and the details panel reads the values back out of it.
-  const syntax = extractSyntaxClause(content);
+  const syntax = extractSyntaxClause(masked);
 
   // Extract ACCESS or MAX-ACCESS
-  const accessMatch = content.match(/(?:ACCESS|MAX-ACCESS)\s+([\w\-]+)/i);
+  const accessMatch = masked.match(/(?:ACCESS|MAX-ACCESS)\s+([\w\-]+)/i);
   const access = accessMatch ? accessMatch[1].trim() : '';
 
   // Extract STATUS
-  const statusMatch = content.match(/STATUS\s+([\w\-]+)/i);
+  const statusMatch = masked.match(/STATUS\s+([\w\-]+)/i);
   const status = statusMatch ? statusMatch[1].trim() : '';
 
   // Extract DESCRIPTION
   const descMatch = content.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
   const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '';
 
-  // Extract OID assignment (parent name and SubID only, no resolution)
-  const oidMatch = content.match(/::=\s*\{\s*([\w\-]+)\s+([\d\s]+)\s*\}/);
+  // Extract OID assignment (parent name and SubID only, no resolution).
+  // Shared with every other construct, so an OBJECT-TYPE may be written
+  // `::= { foo bar(1) }` or anchored at `iso(1)` like the rest of them.
+  const oidMatch = masked.match(/::=\s*(\{[^}]+\})/);
   if (!oidMatch) return null;
 
-  const parentName = oidMatch[1];
-  const subids = oidMatch[2].trim().split(/\s+/).map(Number);
+  const parsed = parseOidBlock(oidMatch[1]);
+  if (!parsed) return null;
 
   return {
     name,
-    parentName,
-    subid: subids.length === 1 ? subids[0] : subids,
+    parentName: parsed.parent,
+    subid: parsed.subids.length === 1 ? parsed.subids[0] : parsed.subids,
     type: 'OBJECT-TYPE',
     syntax,
     access,
