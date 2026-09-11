@@ -96,16 +96,22 @@ export async function countMibs(): Promise<number> {
   return requestToPromise(transaction.objectStore(STORE_NAME).count());
 }
 
-// Save or update a MIB
+// Save or update a MIB.
+// Settles on the transaction, not on the request: a write only counts once the
+// transaction commits, and a commit can still fail (a full quota is the usual
+// way). Resolving on the request means reporting a successful upload for data
+// that never reached the disk.
 export async function saveMib(mib: StoredMibData): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
-    const request = store.put(mib);
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+
+    store.put(mib);
   });
 }
 
@@ -133,10 +139,12 @@ export async function deleteMib(id: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
-    const request = store.delete(id);
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+
+    store.delete(id);
   });
 }
 
@@ -164,10 +172,12 @@ export async function clearAllMibs(): Promise<void> {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
-    const request = store.clear();
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+
+    store.clear();
   });
 }
 
@@ -232,10 +242,14 @@ export async function saveMergedTree(
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(TREE_STORE_NAME, 'readwrite');
     const store = transaction.objectStore(TREE_STORE_NAME);
-    const request = store.put({ id: TREE_KEY, tree, textualConventions });
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    // The merged tree is the largest thing written here, so it is the write
+    // most likely to fail at commit time. Settle on the transaction.
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+
+    store.put({ id: TREE_KEY, tree, textualConventions });
   });
 }
 
@@ -269,9 +283,11 @@ export async function clearMergedTree(): Promise<void> {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(TREE_STORE_NAME, 'readwrite');
     const store = transaction.objectStore(TREE_STORE_NAME);
-    const request = store.delete(TREE_KEY);
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+
+    store.delete(TREE_KEY);
   });
 }

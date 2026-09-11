@@ -48,6 +48,8 @@ export interface RebuildResult {
   files: RebuildFileResult[];
   /** File names excluded from the build because a dependency was missing */
   errorFiles: string[];
+  /** File names that contributed some definitions but not all of them */
+  unplacedFiles?: string[];
   /** Ids whose parse is now cached, so the caller can skip sending them next time */
   cachedIds: string[];
   /**
@@ -153,10 +155,15 @@ export async function runRebuild(
   const maxRetries = 10;
   let retryCount = 0;
 
+  // Definitions that found no parent: they are in no tree, so the file they
+  // came from has to say so rather than just showing a lower node count
+  let unresolved: ReturnType<MibTreeBuilder['getUnresolvedOrphans']> = [];
+
   while (retryCount < maxRetries) {
     const builder = new MibTreeBuilder();
     try {
       tree = builder.buildTree(modules);
+      unresolved = builder.getUnresolvedOrphans();
       break;
     } catch (buildError) {
       const errorMessage = buildError instanceof Error ? buildError.message : 'Unknown error';
@@ -252,6 +259,23 @@ export async function runRebuild(
     }
   }
 
+  // Unplaced definitions, by the file they came from
+  const unplacedByFile = new Map<string, typeof unresolved>();
+  for (const orphan of unresolved) {
+    const fileName = orphan.fileName;
+    if (!fileName) continue;
+    if (!unplacedByFile.has(fileName)) unplacedByFile.set(fileName, []);
+    unplacedByFile.get(fileName)!.push(orphan);
+  }
+
+  const describeUnplaced = (orphans: typeof unresolved): string => {
+    const anchors = Array.from(new Set(orphans.map(orphan => orphan.parentName).filter(Boolean)));
+    const shown = anchors.slice(0, 3).join(', ');
+    const rest = anchors.length > 3 ? `, and ${anchors.length - 3} more` : '';
+    const count = orphans.length === 1 ? '1 definition' : `${orphans.length} definitions`;
+    return `${count} could not be placed: no node named ${shown}${rest} was found`;
+  };
+
   const validMibs = mibs.filter(mib => !errorFiles.has(mib.fileName));
   const builtModuleByFileName = new Map(modules.map(m => [m.fileName, m]));
 
@@ -316,11 +340,13 @@ export async function runRebuild(
       }
     }
 
+    const unplaced = unplacedByFile.get(mib.fileName);
+
     fileResults.set(mib.id, {
       id: mib.id,
       nodeCount: nodeCountByFile.get(mib.fileName) || 0,
       conflicts: conflicts.length > 0 ? conflicts : undefined,
-      error: undefined,
+      error: unplaced ? describeUnplaced(unplaced) : undefined,
       missingDependencies: undefined,
     });
   }
@@ -333,12 +359,17 @@ export async function runRebuild(
     }
   }
 
+  const unplacedFiles = Array.from(unplacedByFile.keys()).filter(
+    fileName => !errorFiles.has(fileName)
+  );
+
   const result: RebuildResult = {
     ok: true,
     tree,
     textualConventions,
     files: Array.from(fileResults.values()).filter(f => mibsById.has(f.id)),
     errorFiles: Array.from(errorFiles),
+    unplacedFiles: unplacedFiles.length > 0 ? unplacedFiles : undefined,
     cachedIds: getCachedIds(),
   };
 

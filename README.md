@@ -23,7 +23,8 @@ browser's storage.
   the `TEXTUAL-CONVENTION` it names — and a link back to the source file
 - **Missing dependency reporting** — a module whose imports are not loaded is
   named along with the MIB it needs, and starts contributing as soon as you add
-  it
+  it; a definition whose anchor no loaded file defines at all is reported
+  against its file rather than quietly left out of the tree
 - **Conflict detection** — two files declaring the same module differently are
   flagged with a field-by-field diff
 - **Traps only** — a toggle that folds the tree down to the notification

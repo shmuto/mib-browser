@@ -153,6 +153,10 @@ getAllMibs()
                                         │      record the error, retry
                                         │      (up to 10 times)
                                         ▼
+                                        ├─ definitions with an anchor no
+                                        │    file defines → recorded against
+                                        │    the file they came from
+                                        ▼
                                      per-file bookkeeping
                                      node counts, conflicts, errors
    ┌──────────────────────────────◀  post { tree, tcs, files }

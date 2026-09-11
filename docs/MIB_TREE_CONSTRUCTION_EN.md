@@ -234,9 +234,9 @@ function resolveParent(node: TreeBuildNode, moduleName: string): TreeBuildNode |
 
   // 2. Search using IMPORTS information
   const imports = importsMap.get(moduleName);
-  if (imports && imports.has(parentName)) {
-    const sourceModule = imports.get(parentName)!;
-    const importedKey = `${sourceModule}::${parentName}`;
+  const declaredSource = imports?.get(parentName);
+  if (declaredSource) {
+    const importedKey = `${declaredSource}::${parentName}`;
     if (symbolMap.has(importedKey)) {
       return symbolMap.get(importedKey)!;
     }
@@ -248,7 +248,16 @@ function resolveParent(node: TreeBuildNode, moduleName: string): TreeBuildNode |
     return seed;
   }
 
-  // 4. Fallback: Cross-module search (only if name is unique)
+  // 3b. A root arc written as a number: `::= { 1 3 6 1 4 1 99999 }`
+  if (/^\d+$/.test(parentName)) {
+    const rootArc = seedNodes.find(seed => seed.oid === parentName);
+    if (rootArc) return rootArc;
+  }
+
+  // 4. Fallback: Cross-module search (only if name is unique), and only for
+  // an anchor the module did not say where to find
+  if (declaredSource) return null;
+
   const candidates = nameMap.get(parentName);
   if (candidates && candidates.length === 1) {
     return candidates[0];
@@ -257,6 +266,22 @@ function resolveParent(node: TreeBuildNode, moduleName: string): TreeBuildNode |
   return null;  // Parent not found → orphan node
 }
 ```
+
+Two details of that order matter:
+
+- **An `IMPORTS` clause is taken at its word.** When a module says its anchor
+  comes from `VENDOR-B-SMI`, a same-named node belonging to some other vendor's
+  module is not that anchor. Attaching to it would invent an OID — and present
+  it with the same confidence as a real one — while hiding the missing
+  dependency the module actually has. So step 4 is skipped for an anchor that
+  `IMPORTS` names, and the node becomes an orphan, which is what makes
+  `detectMissingMibs()` report the file it needs. The step 3 seed lookup comes
+  first on purpose: nearly every module imports `enterprises` and friends from
+  `SNMPv2-SMI` without loading it, and those resolve to seeds.
+- **A numeric parent is a root arc, not a name.** `foo OBJECT IDENTIFIER ::=
+  { 1 3 6 1 4 1 99999 }` is legal SMI: the first sub-identifier is the arc
+  `iso`, not an identifier to look up. Without step 3b the module - and every
+  definition hanging off it - resolved to nothing and left the tree silently.
 
 #### Duplicate Detection and Merging
 
@@ -521,6 +546,20 @@ function detectMissingMibs(): Set<string> {
   return missing;
 }
 ```
+
+### Unresolved Anchors
+
+An orphan whose parent is named in `IMPORTS` is a missing dependency, and
+`buildTree()` raises it. An orphan whose parent nothing defines at all is a
+different thing: the module refers to an anchor no loaded file provides, and
+there is no file to ask for. Those nodes cannot be placed in any tree.
+
+They used to be dropped without a word — the file simply showed a smaller node
+count than it has definitions. `MibTreeBuilder.getUnresolvedOrphans()` now
+returns them once the rescue passes are done, and the rebuild attributes them to
+the file they came from: the file carries an error naming the anchors that were
+not found, and `RebuildResult.unplacedFiles` lists it so the UI can raise a
+warning. The rest of the file's definitions are still in the tree.
 
 ### Error Notification
 

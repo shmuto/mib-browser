@@ -295,9 +295,9 @@ export class MibTreeBuilder {
 
     // 2. Search using IMPORTS information
     const imports = this.importsMap.get(node.moduleName);
-    if (imports && imports.has(parentName)) {
-      const sourceModule = imports.get(parentName)!;
-      const importedKey = `${sourceModule}::${parentName}`;
+    const declaredSource = imports?.get(parentName);
+    if (declaredSource) {
+      const importedKey = `${declaredSource}::${parentName}`;
       parent = this.symbolMap.get(importedKey);
       if (parent) {
         return parent;
@@ -310,13 +310,54 @@ export class MibTreeBuilder {
       return parent;
     }
 
-    // 4. Fallback search in Name Map (cross-module)
+    // 3b. An assignment written numerically - `::= { 1 3 6 1 4 1 99999 }` -
+    // names a root arc rather than a node. It is legal SMI, and resolving it
+    // to the seed with that OID is the difference between the module landing
+    // in the tree and disappearing from it without a word.
+    if (/^\d+$/.test(parentName)) {
+      const rootArc = this.seedNodes.find(seed => seed.oid === parentName);
+      if (rootArc) {
+        return rootArc;
+      }
+    }
+
+    // 4. Fallback search in Name Map (cross-module).
+    // Only for an anchor the module did not say where to find: when IMPORTS
+    // names a source module, a same-named node from some other vendor's module
+    // is not that anchor, and attaching to it would invent an OID and hide the
+    // missing dependency the module actually has.
+    if (declaredSource) {
+      return null;
+    }
+
     const candidates = this.nameMap.get(parentName);
     if (candidates && candidates.length === 1) {
       return candidates[0]; // Only if unique
     }
 
     return null;
+  }
+
+  /**
+   * The nodes that never found a parent, after every rescue pass.
+   *
+   * These contribute nothing to the tree. Reporting them is the caller's job:
+   * an anchor that no loaded module defines is either a missing dependency -
+   * which `buildTree` raises on its own - or a module that refers to something
+   * nothing provides, which would otherwise vanish silently.
+   */
+  public getUnresolvedOrphans(): Array<{
+    name: string;
+    parentName: string;
+    moduleName: string;
+    fileName?: string;
+  }> {
+    return this.orphanNodes.map(node => ({
+      name: node.name,
+      parentName: node.parentName ?? '',
+      moduleName: node.moduleName,
+      fileName: node.fileName,
+    }));
   }
 
   // === Pass 2.5: Orphan Rescue ===
