@@ -168,6 +168,7 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         return {
           success: false,
           error: validation.error,
+          reason: 'not-a-mib',
         };
       }
 
@@ -277,6 +278,7 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
         return {
           success: false,
           error: validation.error,
+          reason: 'not-a-mib',
         };
       }
 
