@@ -9,7 +9,13 @@
 import { describe, test, expect } from 'bun:test';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { validateMibContent, parseMibModule, flattenTree } from '../src/lib/mib-parser';
+import {
+  validateMibContent,
+  parseMibModule,
+  flattenTree,
+  filterTreeToNotifications,
+  isNotificationNode,
+} from '../src/lib/mib-parser';
 import { MibTreeBuilder } from '../src/lib/mib-tree-builder';
 import type { MibNode } from '../src/types/mib';
 
@@ -48,6 +54,8 @@ describe('the OIDs the README promises', () => {
     ['oddCounter', '1.3.6.1.4.1.99998.1'],
     ['testName', '1.3.6.1.4.1.99999.1.1'],
     ['extLabel', '1.3.6.1.4.1.99999.2.1.1.1.2'],
+    ['v1CardRemoved', '1.3.6.1.4.1.99999.5.0.1'],
+    ['v1CardInserted', '1.3.6.1.4.1.99999.5.0.2'],
   ])('%s resolves to %s', (name, oid) => {
     expect(nodesByName.get(name)?.oid).toBe(oid);
   });
@@ -100,6 +108,26 @@ describe('the shapes each fixture stands for', () => {
     });
 
     expect(differing.length).toBeGreaterThanOrEqual(3);
+  });
+
+  // TEST-V1-TRAP-MIB: SMIv1 traps, which carry a specific-trap number
+  // instead of an OID
+  test('an SMIv1 TRAP-TYPE lands under its enterprise node and keeps its varbinds', () => {
+    const removed = nodesByName.get('v1CardRemoved');
+    expect(removed?.type).toBe('TRAP-TYPE');
+    expect(removed?.variables).toEqual(['v1TrapReason']);
+    expect(isNotificationNode(removed!)).toBe(true);
+
+    // No VARIABLES clause means no list at all, not an empty one
+    expect(nodesByName.get('v1CardInserted')?.variables).toBeUndefined();
+  });
+
+  test('the traps-only filter keeps SMIv1 traps and their branch', () => {
+    const kept = flattenTree(filterTreeToNotifications(tree)).map(node => node.name);
+    expect(kept).toContain('v1CardRemoved');
+    expect(kept).toContain('v1CardInserted');
+    expect(kept).toContain('testV1Traps');
+    expect(kept).not.toContain('v1TrapReason');
   });
 
   // TEST-EXTENSION-MIB imports its anchor from TEST-BASE-MIB

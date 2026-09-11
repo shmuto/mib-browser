@@ -26,18 +26,23 @@ browser's storage.
   it
 - **Conflict detection** — two files declaring the same module differently are
   flagged with a field-by-field diff
-- **Traps only** — a toggle that folds the tree down to the `NOTIFICATION-TYPE`
-  definitions (traps and informs) and the branches leading to them, expanded
-  ready to read; combines with search
+- **Traps only** — a toggle that folds the tree down to the notification
+  definitions (SMIv2 `NOTIFICATION-TYPE` and SMIv1 `TRAP-TYPE`) and the branches
+  leading to them, expanded ready to read; combines with search
+- **SMIv1 traps** — `TRAP-TYPE` definitions, which carry a specific-trap number
+  instead of an OID, are placed under their `ENTERPRISE` node as
+  `<enterprise>.0.<number>`, the mapping of RFC 3584; the varbinds a
+  notification carries (`VARIABLES`, or SMIv2 `OBJECTS`) are listed in the
+  details panel and link through to their definitions
 - **Compact view** — folds single-child chains (`iso / org / dod / internet`)
   into one row
 - **Handles large collections** — the tree view is virtualized, so expanding
   tens of thousands of nodes stays responsive
 
 Supported constructs: `MODULE-IDENTITY`, `OBJECT-IDENTITY`, `OBJECT IDENTIFIER`,
-`OBJECT-TYPE`, `NOTIFICATION-TYPE`, `TEXTUAL-CONVENTION`, `OBJECT-GROUP`,
-`NOTIFICATION-GROUP`, `MODULE-COMPLIANCE`, including multi sub-identifier
-assignments such as `::= { parent 3011 7124 3282 }`.
+`OBJECT-TYPE`, `NOTIFICATION-TYPE`, `TRAP-TYPE`, `TEXTUAL-CONVENTION`,
+`OBJECT-GROUP`, `NOTIFICATION-GROUP`, `MODULE-COMPLIANCE`, including multi
+sub-identifier assignments such as `::= { parent 3011 7124 3282 }`.
 
 ## Development
 

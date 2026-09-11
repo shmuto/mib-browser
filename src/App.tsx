@@ -73,7 +73,8 @@ export default function App() {
   // the query: typing stays responsive and React re-filters at low priority.
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
-  // "Traps only" filtering - keep NOTIFICATION-TYPE nodes and their ancestors.
+  // "Traps only" filtering - keep notification nodes (NOTIFICATION-TYPE and
+  // SMIv1 TRAP-TYPE) and their ancestors.
   // Applied before the search so the two compose: searching while the filter is
   // on searches the notifications.
   const typeFilteredTree = useMemo(() => {
@@ -390,7 +391,7 @@ export default function App() {
                     mergedTree.length === 0
                       ? 'Upload a new file to get started'
                       : notificationsOnly
-                        ? 'No NOTIFICATION-TYPE definitions match. Turn off "Traps Only" to see the whole tree.'
+                        ? 'No notification definitions match. Turn off "Traps Only" to see the whole tree.'
                         : 'No node matches the search.'
                   }
                 />

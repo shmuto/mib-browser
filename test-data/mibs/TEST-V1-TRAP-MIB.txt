@@ -1,0 +1,46 @@
+TEST-V1-TRAP-MIB DEFINITIONS ::= BEGIN
+
+-- SMIv1 module (RFC 1155 / RFC 1215), the shape most enterprise MIBs still
+-- use to declare their traps. A TRAP-TYPE has no OID of its own: it names an
+-- ENTERPRISE and a specific-trap number, and RFC 3584 section 3.1 maps the
+-- pair onto <enterprise>.0.<number>.
+
+IMPORTS
+    OBJECT-TYPE
+        FROM RFC-1212
+    TRAP-TYPE
+        FROM RFC-1215
+    testBaseMIB
+        FROM TEST-BASE-MIB;
+
+testV1Traps OBJECT IDENTIFIER ::= { testBaseMIB 5 }
+
+v1TrapReason OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    unknown(1),
+                    overheated(2),
+                    unplugged(3)
+                }
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION
+        "Why the trap was sent. Carried as a varbind by v1CardRemoved, so
+         the details panel has something to link the VARIABLES list to."
+    ::= { testV1Traps 1 }
+
+v1CardRemoved TRAP-TYPE
+    ENTERPRISE  testV1Traps
+    VARIABLES   { v1TrapReason }
+    DESCRIPTION
+        "A card was removed. Resolves to testV1Traps.0.1 - the specific-trap
+         number 1 under the enterprise node, through the 0."
+    ::= 1
+
+v1CardInserted TRAP-TYPE
+    ENTERPRISE  testV1Traps
+    DESCRIPTION
+        "A card was inserted. Has no VARIABLES clause, which is legal: the
+         details panel must not invent an empty list for it."
+    ::= 2
+
+END

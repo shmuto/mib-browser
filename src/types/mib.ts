@@ -12,6 +12,7 @@ export interface MibNode {
   isExpanded?: boolean;     // For tree display: expansion state
   mibName?: string;         // MIB module name (e.g., "IF-MIB")
   fileName?: string;        // Source file name (e.g., "IF-MIB.txt")
+  variables?: string[];     // Objects carried by a notification (SMIv1 VARIABLES / SMIv2 OBJECTS)
 }
 
 // MIB data for storage
@@ -88,6 +89,7 @@ export interface RawMibObject {
   syntax?: string;
   access?: string;
   status?: string;
+  variables?: string[];         // Objects carried by a notification (SMIv1 VARIABLES / SMIv2 OBJECTS)
   fileName?: string;            // Source file name
 }
 

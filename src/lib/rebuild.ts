@@ -286,7 +286,7 @@ export async function runRebuild(
             if (!otherObj) continue;
 
             const differences: { field: string; existingValue: string; newValue: string }[] = [];
-            const fieldsToCheck: (keyof typeof thisObj)[] = ['type', 'syntax', 'access', 'status', 'description'];
+            const fieldsToCheck: (keyof typeof thisObj)[] = ['type', 'syntax', 'access', 'status', 'description', 'variables'];
 
             for (const field of fieldsToCheck) {
               const thisValue = String(thisObj[field] || '');
