@@ -19,8 +19,8 @@ browser's storage.
 - **Search** — by object name, OID or description text, filtering the tree to
   matches and their ancestors
 - **Node details** — OID, `MODULE::object` notation, syntax, access, status,
-  description, enumerated values from `TEXTUAL-CONVENTION`, and a link back to
-  the source file
+  description, enumerated values — the object's own `SYNTAX INTEGER { ... }` or
+  the `TEXTUAL-CONVENTION` it names — and a link back to the source file
 - **Missing dependency reporting** — a module whose imports are not loaded is
   named along with the MIB it needs, and starts contributing as soon as you add
   it

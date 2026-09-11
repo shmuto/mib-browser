@@ -321,6 +321,105 @@ function extractObjectTypes(content: string): string[] {
 }
 
 /**
+ * The clauses that can follow SYNTAX in an OBJECT-TYPE or a TEXTUAL-CONVENTION.
+ * Sticky, so it is tested at one position rather than searched for.
+ */
+const SYNTAX_TERMINATOR = /(?:UNITS|MAX-ACCESS|ACCESS|STATUS|DESCRIPTION|REFERENCE|DISPLAY-HINT|INDEX|AUGMENTS|DEFVAL|::=)\b/iy;
+
+/**
+ * Extract the SYNTAX clause of a definition.
+ *
+ * The clause ends at the next clause keyword, but only one that is not inside
+ * the type itself: an enumeration is free to label a value `status(2)` or
+ * `description(4)`, and a size constraint is written with parentheses and dots.
+ * So the scan tracks brace, parenthesis and string depth, and only treats a
+ * keyword at depth 0 as the end.
+ *
+ * @param content An OBJECT-TYPE block or a TEXTUAL-CONVENTION body
+ * @returns The clause with its whitespace collapsed, or '' when there is none
+ */
+function extractSyntaxClause(content: string): string {
+  const keyword = content.match(/\bSYNTAX\b/i);
+  if (!keyword || keyword.index === undefined) return '';
+
+  const start = keyword.index + keyword[0].length;
+  let depth = 0;
+  let inString = false;
+  let end = content.length;
+
+  for (let i = start; i < content.length; i++) {
+    const code = content.charCodeAt(i);
+
+    if (inString) {
+      if (code === 34 /* " */) inString = false;
+      continue;
+    }
+
+    if (code === 34 /* " */) {
+      inString = true;
+    } else if (code === 123 /* { */ || code === 40 /* ( */) {
+      depth++;
+    } else if (code === 125 /* } */ || code === 41 /* ) */) {
+      if (depth > 0) depth--;
+    } else if (depth === 0 && i > start) {
+      // A clause keyword only ends the SYNTAX if it starts a word
+      const previous = content.charCodeAt(i - 1);
+      const isWordStart = previous === 32 || previous === 9 || previous === 10 || previous === 13;
+      if (!isWordStart) continue;
+
+      SYNTAX_TERMINATOR.lastIndex = i;
+      if (SYNTAX_TERMINATOR.test(content)) {
+        end = i;
+        break;
+      }
+    }
+  }
+
+  return content.slice(start, end).trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Split a SYNTAX clause into its base type and the values it constrains
+ *
+ * `INTEGER { up(1), down(2) }` gives the type `INTEGER` and two enumerated
+ * values; `Integer32 (0..65535)` gives the type `Integer32` and a range.
+ * @param syntaxRaw A SYNTAX clause as written in the MIB
+ */
+export function parseSyntaxValues(syntaxRaw: string): {
+  syntax: string;
+  enumValues?: Array<{ name: string; value: number }>;
+  ranges?: Array<{ min: number; max: number }>;
+} {
+  let syntax = syntaxRaw.trim();
+  let enumValues: Array<{ name: string; value: number }> | undefined;
+  let ranges: Array<{ min: number; max: number }> | undefined;
+
+  // Enumerated values: INTEGER { name(value), ... }, and BITS the same way
+  const enumMatch = syntax.match(/(\w+(?:\s+\w+)*)\s*\{([^}]+)\}/);
+  if (enumMatch) {
+    const values: Array<{ name: string; value: number }> = [];
+    const enumPattern = /([\w\-]+)\s*\(\s*(-?\d+)\s*\)/g;
+    let enumItem;
+    while ((enumItem = enumPattern.exec(enumMatch[2])) !== null) {
+      values.push({ name: enumItem[1], value: parseInt(enumItem[2], 10) });
+    }
+    if (values.length > 0) {
+      syntax = enumMatch[1].trim();
+      enumValues = values;
+    }
+  }
+
+  // Size or range constraint: (SIZE (min..max)) or (min..max)
+  const rangeMatch = syntax.match(/\(\s*(?:SIZE\s*\()?\s*(\d+)\s*\.\.\s*(\d+)\s*\)?\s*\)/i);
+  if (rangeMatch) {
+    ranges = [{ min: parseInt(rangeMatch[1], 10), max: parseInt(rangeMatch[2], 10) }];
+    syntax = syntax.replace(/\s*\(.*\)\s*$/, '').trim();
+  }
+
+  return { syntax, enumValues, ranges };
+}
+
+/**
  * Extract TEXTUAL-CONVENTION definitions from MIB content
  */
 function extractTextualConventions(content: string): import('../types/mib').TextualConvention[] {
@@ -350,35 +449,10 @@ function extractTextualConventions(content: string): import('../types/mib').Text
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : undefined;
 
     // Extract SYNTAX with possible enum values or ranges
-    const syntaxMatch = body.match(/SYNTAX\s+([\s\S]*?)(?=STATUS|DESCRIPTION|DISPLAY-HINT|$)/i);
-    if (!syntaxMatch) continue;
+    const syntaxRaw = extractSyntaxClause(body);
+    if (!syntaxRaw) continue;
 
-    let syntaxRaw = syntaxMatch[1].trim();
-    let syntax = syntaxRaw;
-    let enumValues: Array<{ name: string; value: number }> | undefined;
-    let ranges: Array<{ min: number; max: number }> | undefined;
-
-    // Check for enum values: INTEGER { name(value), ... }
-    const enumMatch = syntaxRaw.match(/(\w+(?:\s+\w+)*)\s*\{([^}]+)\}/);
-    if (enumMatch) {
-      syntax = enumMatch[1].trim();
-      const enumBody = enumMatch[2];
-      enumValues = [];
-      const enumPattern = /(\w+)\s*\(\s*(-?\d+)\s*\)/g;
-      let enumItem;
-      while ((enumItem = enumPattern.exec(enumBody)) !== null) {
-        enumValues.push({ name: enumItem[1], value: parseInt(enumItem[2], 10) });
-      }
-      if (enumValues.length === 0) enumValues = undefined;
-    }
-
-    // Check for size/range constraints: (SIZE (min..max)) or (min..max)
-    const rangeMatch = syntaxRaw.match(/\(\s*(?:SIZE\s*\()?\s*(\d+)\s*\.\.\s*(\d+)\s*\)?\s*\)/i);
-    if (rangeMatch) {
-      ranges = [{ min: parseInt(rangeMatch[1], 10), max: parseInt(rangeMatch[2], 10) }];
-      // Clean up syntax
-      syntax = syntax.replace(/\s*\(.*\)\s*$/, '').trim();
-    }
+    const { syntax, enumValues, ranges } = parseSyntaxValues(syntaxRaw);
 
     conventions.push({
       name,
@@ -975,9 +1049,9 @@ function parseObjectTypeRaw(content: string): import('../types/mib').RawMibObjec
   if (!nameMatch) return null;
   const name = nameMatch[1];
 
-  // Extract SYNTAX
-  const syntaxMatch = content.match(/SYNTAX\s+([\w\-\s(){}]+?)(?=\s+(?:UNITS|MAX-ACCESS|ACCESS|STATUS|DESCRIPTION))/i);
-  const syntax = syntaxMatch ? syntaxMatch[1].trim() : '';
+  // Extract SYNTAX. Kept whole - an enumeration or a size constraint is part
+  // of the type, and the details panel reads the values back out of it.
+  const syntax = extractSyntaxClause(content);
 
   // Extract ACCESS or MAX-ACCESS
   const accessMatch = content.match(/(?:ACCESS|MAX-ACCESS)\s+([\w\-]+)/i);

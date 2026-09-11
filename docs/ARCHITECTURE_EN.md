@@ -95,7 +95,7 @@ management library — component state plus one hook is enough at this size.
 | `TreeNode` | One row of the tree. Presentational and memoized. |
 | `TreeExpandControls` | Expand all / collapse all / compact view toggle. |
 | `SearchBar` | Query input and result count. |
-| `NodeDetails` | The selected node: OID, notation, source file, syntax, TEXTUAL-CONVENTION values (looked up in the index stored with the tree), description, children. |
+| `NodeDetails` | The selected node: OID, notation, source file, syntax, enumerated values (the object's own inline `SYNTAX INTEGER { ... }` first, otherwise its TEXTUAL-CONVENTION, looked up in the index stored with the tree), the varbinds of a notification, description, children. |
 | `OidBreadcrumb` | The iso → org → dod → … path above the node details, each segment clickable. |
 | `ConflictNotificationPanel` | Banner listing files that define the same module differently, with a diff dialog. |
 | `NotificationPanel` | Persistent warnings and errors (missing dependencies, failed uploads). Exports the `useNotifications` hook. |

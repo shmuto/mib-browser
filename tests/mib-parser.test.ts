@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
   validateMibContent,
+  parseSyntaxValues,
   parseMibModule,
   filterTreeByQuery,
   filterTreeToNotifications,
@@ -667,5 +668,135 @@ END`,
 
     const notification = parsed.objects.find(o => o.name === 'somethingHappened')!;
     expect(notification.variables).toEqual(['objReason', 'objWhen']);
+  });
+});
+
+describe('SYNTAX clauses', () => {
+  const SYNTAX_MIB = `SYNTAX-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, Integer32, Gauge32, enterprises FROM SNMPv2-SMI
+        TEXTUAL-CONVENTION, DisplayString FROM SNMPv2-TC;
+
+SynState ::= TEXTUAL-CONVENTION
+    STATUS      current
+    DESCRIPTION "A convention whose labels read like clause keywords."
+    SYNTAX      INTEGER {
+                    status(1),
+                    description(2),
+                    reference(3)
+                }
+
+synRoot OBJECT IDENTIFIER ::= { enterprises 5258 }
+
+synState OBJECT-TYPE
+    SYNTAX      INTEGER {
+                    up(1),
+                    down(2),
+                    testing(3)
+                }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "An inline enumeration, spread over several lines."
+    ::= { synRoot 1 }
+
+synSize OBJECT-TYPE
+    SYNTAX      Integer32 (0..65535)
+    UNITS       "bytes"
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "A ranged type."
+    ::= { synRoot 2 }
+
+synLabel OBJECT-TYPE
+    SYNTAX      DisplayString (SIZE (0..255))
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "A size constraint."
+    ::= { synRoot 3 }
+
+synRate OBJECT-TYPE
+    SYNTAX      Gauge32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "A plain type."
+    ::= { synRoot 4 }
+
+synTable OBJECT-TYPE
+    SYNTAX      SEQUENCE OF SynEntry
+    MAX-ACCESS  not-accessible
+    STATUS      current
+    DESCRIPTION "A table."
+    ::= { synRoot 5 }
+
+synTricky OBJECT-TYPE
+    SYNTAX      INTEGER { status(1), description(2), index(3) }
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Enumeration labels that read like clause keywords."
+    ::= { synRoot 6 }
+END`;
+
+  const objects = new Map(parseMibModule(SYNTAX_MIB, 'syntax.txt').objects.map(o => [o.name, o]));
+
+  test.each([
+    ['synState', 'INTEGER { up(1), down(2), testing(3) }'],
+    ['synSize', 'Integer32 (0..65535)'],
+    ['synLabel', 'DisplayString (SIZE (0..255))'],
+    ['synRate', 'Gauge32'],
+    ['synTable', 'SEQUENCE OF SynEntry'],
+    ['synTricky', 'INTEGER { status(1), description(2), index(3) }'],
+  ])('%s keeps its whole SYNTAX', (name, syntax) => {
+    expect(objects.get(name)?.syntax).toBe(syntax);
+  });
+
+  test('the clause after SYNTAX is not swallowed', () => {
+    expect(objects.get('synSize')?.access).toBe('read-write');
+    expect(objects.get('synState')?.description).toBe('An inline enumeration, spread over several lines.');
+  });
+
+  test('a TEXTUAL-CONVENTION enumeration survives keyword-shaped labels', () => {
+    const tcs = parseMibModule(SYNTAX_MIB, 'syntax.txt').textualConventions!;
+    const state = tcs.find(tc => tc.name === 'SynState')!;
+    expect(state.syntax).toBe('INTEGER');
+    expect(state.enumValues).toEqual([
+      { name: 'status', value: 1 },
+      { name: 'description', value: 2 },
+      { name: 'reference', value: 3 },
+    ]);
+  });
+
+  test('parseSyntaxValues splits a type from its values', () => {
+    expect(parseSyntaxValues('INTEGER { up(1), down(2) }')).toEqual({
+      syntax: 'INTEGER',
+      enumValues: [
+        { name: 'up', value: 1 },
+        { name: 'down', value: 2 },
+      ],
+      ranges: undefined,
+    });
+
+    expect(parseSyntaxValues('Integer32 (0..65535)')).toEqual({
+      syntax: 'Integer32',
+      enumValues: undefined,
+      ranges: [{ min: 0, max: 65535 }],
+    });
+
+    expect(parseSyntaxValues('DisplayString (SIZE (0..255))')).toEqual({
+      syntax: 'DisplayString',
+      enumValues: undefined,
+      ranges: [{ min: 0, max: 255 }],
+    });
+
+    expect(parseSyntaxValues('Gauge32')).toEqual({
+      syntax: 'Gauge32',
+      enumValues: undefined,
+      ranges: undefined,
+    });
+  });
+
+  test('negative and hyphenated enumeration entries are read', () => {
+    expect(parseSyntaxValues('INTEGER { not-available(-1), ok(0) }').enumValues).toEqual([
+      { name: 'not-available', value: -1 },
+      { name: 'ok', value: 0 },
+    ]);
   });
 });

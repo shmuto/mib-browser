@@ -75,7 +75,7 @@ interface MibNode {
   name: string;           // Node name (e.g., "sysDescr")
   parent: string | null;  // Parent's OID, not a node reference
   type: string;           // OBJECT-TYPE type
-  syntax: string;         // SYNTAX
+  syntax: string;         // SYNTAX, whole: "INTEGER { up(1), down(2) }"
   access: string;         // ACCESS/MAX-ACCESS
   status: string;         // STATUS
   description: string;    // DESCRIPTION
@@ -83,6 +83,7 @@ interface MibNode {
   isExpanded?: boolean;
   mibName?: string;       // Module the node came from
   fileName?: string;      // Source file name
+  variables?: string[];   // VARIABLES / OBJECTS of a notification
 }
 ```
 
@@ -429,6 +430,17 @@ In this case:
 node.subid = [30065, 3011, 7124, 3282];
 node.oid = "1.3.6.1.4.1.30065.3011.7124.3282";
 ```
+
+#### The SYNTAX clause
+
+`SYNTAX` runs to the next clause keyword, but the type itself may contain one:
+an enumeration is free to label a value `status(2)` or `index(3)`, and a
+constraint is written with parentheses and dots — `DisplayString (SIZE (0..255))`.
+`extractSyntaxClause()` therefore scans forward tracking brace, parenthesis and
+string depth, and only ends the clause at a keyword found at depth 0. The whole
+clause is kept on the node, and `parseSyntaxValues()` splits it into a base type
+plus enumerated values or a range when the details panel needs them — the same
+split the `TEXTUAL-CONVENTION` reader uses.
 
 #### SMIv1 TRAP-TYPE
 
@@ -962,6 +974,8 @@ function detectConflicts(mibs: Mib[], flatTree: MibNode[]): Map<string, Conflict
 | `filterTreeByQuery()` | `mib-parser.ts` | Filter the tree to search matches |
 | `filterTreeToNotifications()` | `mib-parser.ts` | Filter the tree to `NOTIFICATION-TYPE` / `TRAP-TYPE` nodes |
 | `extractTrapTypes()` | `mib-parser.ts` | Map SMIv1 `TRAP-TYPE` definitions onto `<enterprise>.0.<specific>` |
+| `extractSyntaxClause()` | `mib-parser.ts` | Read a whole `SYNTAX` clause, braces and constraints included |
+| `parseSyntaxValues()` | `mib-parser.ts` | Split a `SYNTAX` clause into base type, enumerated values and range |
 | `rebuildAllTrees()` | `useMibStorage.ts` | Full rebuild, with error handling |
 
 ---
