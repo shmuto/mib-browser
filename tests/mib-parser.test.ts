@@ -948,3 +948,212 @@ END`,
     expect(findNodeByOid(colliding, '1.3.6.1.4.1.4245', 'goneName')?.oid).toBe('1.3.6.1.4.1.4245');
   });
 });
+
+describe('real-world module shapes', () => {
+  // RFC 2578 descriptors may contain hyphens, and the standard tree is full of
+  // them: member-body, mib-2. Reading `mib-2` as `2` loses every module that
+  // hangs off it.
+  test('a hyphen is part of the name, not a break in it', () => {
+    const parsed = parseMibModule(
+      `HYPHEN-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE FROM SNMPv2-SMI;
+member-body OBJECT IDENTIFIER ::= { iso 2 }
+us          OBJECT IDENTIFIER ::= { member-body 840 }
+some-leaf OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "a hyphenated leaf"
+    ::= { us 1 }
+END`,
+      'hyphen.txt'
+    );
+
+    const byName = new Map(parsed.objects.map(o => [o.name, o]));
+    expect([...byName.keys()].sort()).toEqual(['member-body', 'some-leaf', 'us']);
+    expect(byName.get('us')?.parentName).toBe('member-body');
+
+    const nodes = new Map(
+      flattenTree(new MibTreeBuilder().buildTree([parsed])).map(n => [n.name, n])
+    );
+    expect(nodes.get('member-body')?.oid).toBe('1.2');
+    expect(nodes.get('some-leaf')?.oid).toBe('1.2.840.1');
+  });
+
+  // IF-MIB's ifTestType explains itself with `noTest OBJECT IDENTIFIER ::=
+  // { 0 0 }` inside its DESCRIPTION, before its own assignment
+  test('a definition quoted inside a DESCRIPTION is prose, not a definition', () => {
+    const parsed = parseMibModule(
+      `QUOTED-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, enterprises FROM SNMPv2-SMI;
+quotedRoot OBJECT IDENTIFIER ::= { enterprises 6001 }
+quotedTestType OBJECT-TYPE
+    SYNTAX      OBJECT IDENTIFIER
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION
+            "This object documents the special value:
+
+                 noTest  OBJECT IDENTIFIER ::= { 0 0 }
+
+            which means no test is running."
+    ::= { quotedRoot 4 }
+END`,
+      'quoted.txt'
+    );
+
+    const names = parsed.objects.map(o => o.name);
+    expect(names).not.toContain('noTest');
+
+    const testType = parsed.objects.find(o => o.name === 'quotedTestType')!;
+    // Its own assignment, not the one its description quotes
+    expect(testType.parentName).toBe('quotedRoot');
+    expect(testType.subid).toBe(4);
+  });
+
+  // SNMPv2-SMI defines the macros the rest of SNMP is written in. The END of
+  // one of them sits directly above `OBJECT-IDENTITY MACRO ::=`.
+  test('a MACRO definition is not an object, and does not swallow the next one', () => {
+    const parsed = parseMibModule(
+      `MACRO-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE FROM SNMPv2-SMI;
+
+OBJECT-IDENTITY MACRO ::=
+BEGIN
+    TYPE NOTATION ::=
+                  "STATUS" Status
+                  "DESCRIPTION" Text
+    VALUE NOTATION ::= value(VALUE OBJECT IDENTIFIER)
+    Status ::= "current" | "deprecated" | "obsolete"
+END
+
+zeroDotZero OBJECT-IDENTITY
+    STATUS     current
+    DESCRIPTION "A value used for null identifiers."
+    ::= { 0 0 }
+
+END`,
+      'macro.txt'
+    );
+
+    expect(parsed.objects.map(o => o.name)).toEqual(['zeroDotZero']);
+    const zero = parsed.objects[0];
+    expect(zero.parentName).toBe('0');
+    expect(zero.description).toBe('A value used for null identifiers.');
+  });
+
+  // SNMPv2-TC's DisplayString describes what its SYNTAX means before declaring it
+  test('a SYNTAX clause is not taken from the prose above it', () => {
+    const parsed = parseMibModule(
+      `PROSE-TC-MIB DEFINITIONS ::= BEGIN
+IMPORTS TEXTUAL-CONVENTION FROM SNMPv2-TC;
+ProseString ::= TEXTUAL-CONVENTION
+    DISPLAY-HINT "255a"
+    STATUS       current
+    DESCRIPTION
+            "A string. Note that the SYNTAX of this convention is not
+            what this sentence says it is, and STATUS is not obsolete."
+    SYNTAX       OCTET STRING (SIZE (0..255))
+END`,
+      'prose-tc.txt'
+    );
+
+    const tc = parsed.textualConventions![0];
+    expect(tc.name).toBe('ProseString');
+    expect(tc.syntax).toBe('OCTET STRING');
+    expect(tc.ranges).toEqual([{ min: 0, max: 255 }]);
+    expect(tc.status).toBe('current');
+    expect(tc.displayHint).toBe('255a');
+  });
+
+  // SNMPv2-TC ends five of its conventions on `SYNTAX OBJECT IDENTIFIER`
+  test('a SYNTAX clause is not read as the start of the next definition', () => {
+    const parsed = parseMibModule(
+      `POINTER-MIB DEFINITIONS ::= BEGIN
+IMPORTS TEXTUAL-CONVENTION FROM SNMPv2-TC;
+AutonomousType ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION  "An independently extensible type identification value."
+    SYNTAX       OBJECT IDENTIFIER
+RowPointer ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION  "Represents a pointer to a conceptual row."
+    SYNTAX       OBJECT IDENTIFIER
+END`,
+      'pointer.txt'
+    );
+
+    expect(parsed.textualConventions?.map(tc => `${tc.name}:${tc.syntax}`)).toEqual([
+      'AutonomousType:OBJECT IDENTIFIER',
+      'RowPointer:OBJECT IDENTIFIER',
+    ]);
+  });
+
+  // OSPF-MIB has a convention called Status, and the scan is case-insensitive
+  test('a convention named after a clause keyword is still a convention', () => {
+    const parsed = parseMibModule(
+      `KEYWORD-NAME-MIB DEFINITIONS ::= BEGIN
+IMPORTS TEXTUAL-CONVENTION FROM SNMPv2-TC;
+Metric ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION  "The metric."
+    SYNTAX       Integer32 (0..65535)
+
+Status ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION  "The status of an entry."
+    SYNTAX       INTEGER { enabled(1), disabled(2) }
+END`,
+      'keyword-name.txt'
+    );
+
+    const tcs = parsed.textualConventions!;
+    expect(tcs.map(tc => tc.name)).toEqual(['Metric', 'Status']);
+    expect(tcs[1].enumValues).toEqual([
+      { name: 'enabled', value: 1 },
+      { name: 'disabled', value: 2 },
+    ]);
+  });
+
+  // The last convention of a module has nothing after it but END, and the
+  // assignments of whatever follows if the body is not bounded
+  test('the last convention in a module does not run past its own clause', () => {
+    const parsed = parseMibModule(
+      `TRAILING-TC-MIB DEFINITIONS ::= BEGIN
+IMPORTS TEXTUAL-CONVENTION, OBJECT-TYPE FROM SNMPv2-TC;
+LastString ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION  "The last convention before the assignments."
+    SYNTAX       OCTET STRING (SIZE (0..255))
+
+trailingAdmin      OBJECT IDENTIFIER ::= { trailingMIB 1 }
+trailingObjects    OBJECT IDENTIFIER ::= { trailingMIB 2 }
+END`,
+      'trailing-tc.txt'
+    );
+
+    const tc = parsed.textualConventions![0];
+    expect(tc.syntax).toBe('OCTET STRING');
+    expect(tc.ranges).toEqual([{ min: 0, max: 255 }]);
+    // and the assignments after it are still definitions of their own
+    expect(parsed.objects.map(o => o.name)).toEqual(['trailingAdmin', 'trailingObjects']);
+  });
+
+  test('an anchor written as iso(1) resolves like iso', () => {
+    const parsed = parseMibModule(
+      `ANCHOR-MIB DEFINITIONS ::= BEGIN
+IMPORTS MODULE-IDENTITY FROM SNMPv2-SMI;
+anchorMIB MODULE-IDENTITY
+    LAST-UPDATED "202601010000Z"
+    ORGANIZATION "test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "anchored at a named-number root arc"
+    ::= { iso(1) std(0) iso8802(8802) 1 }
+END`,
+      'anchor.txt'
+    );
+
+    expect(parsed.objects[0].parentName).toBe('iso');
+    expect(parsed.objects[0].subid).toEqual([0, 8802, 1]);
+  });
+});

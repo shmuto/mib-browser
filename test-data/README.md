@@ -23,9 +23,10 @@ picture, or individual files to isolate a case.
 | `TEST-TC-ONLY-MIB.txt` | A module defining nothing but `TEXTUAL-CONVENTION`s, as `IPV6-TC` (RFC 2465) does. It contributes no nodes to the tree, but must still be accepted on upload: other modules import its types, and the details panel resolves `SYNTAX` against it. |
 | `TEST-EMPTY-MODULE-MIB.txt` | A module whose body is entirely commented out, as RFC-1212 is shipped in most MIB collections. It is a valid module that defines nothing: uploading it must succeed and contribute 0 nodes, so a bulk upload of a standard MIB directory does not report errors for files like this. |
 | `TEST-V1-TRAP-MIB.txt` | An SMIv1 module (RFC 1155 / RFC 1215) whose traps are declared with `TRAP-TYPE`. A trap has no OID of its own — an `ENTERPRISE` node and a specific-trap number — so it has to land at `<enterprise>.0.<number>`. One trap carries a `VARIABLES` clause and one carries none. Its `v1TrapReason` also spells an enumeration out inline, which the `SYNTAX` clause has to keep whole. |
+| `TEST-IEEE-ANCHOR-MIB.txt` | The shape IEEE 802.1 modules are written in, which sent every definition of `IEEE8021-SECY-MIB` out of the tree in silence. It anchors itself at `::= { iso(1) std(0) iso8802(8802) ... }` — a root arc in the named-number form, with no node defined for the arcs it passes through — names two objects with hyphens in them (`member-body`, `ieee-anchor-leaf`), and quotes a definition inside a DESCRIPTION the way IF-MIB does. |
 | `TEST-ODD-HEADER-MIB.txt` | Module name, then a comment, then `DEFINITIONS IMPLICIT TAGS ::= BEGIN` on a later line. Real MIBs are laid out this way, and the module name has to be found across the comment. |
 
-Expected results once all ten are loaded:
+Expected results once all eleven are loaded:
 
 - 1 conflict pair (`TEST-CONFLICT-A.txt` ⇄ `TEST-CONFLICT-B.txt`, 3 differing objects)
 - 1 missing-dependency warning naming `TEST-ABSENT-MIB`
@@ -36,6 +37,8 @@ Expected results once all ten are loaded:
   under Variables; both it and `v1CardInserted` survive the "Traps Only" filter
 - `v1TrapReason` shows `INTEGER` as its syntax and offers `unknown` /
   `overheated` / `unplugged` as values
+- `testIeeeAnchorMIB` resolves to `1.0.8802.1.1.99999` and `member-body` to
+  `1.2`, and no node called `noTest` exists — the one in a description is prose
 - `TestPortState` and `TestMacAddress` are offered as enumerated values in the
   details panel, though `TEST-TC-ONLY-MIB` adds no rows to the tree
 

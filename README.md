@@ -43,7 +43,9 @@ browser's storage.
 Supported constructs: `MODULE-IDENTITY`, `OBJECT-IDENTITY`, `OBJECT IDENTIFIER`,
 `OBJECT-TYPE`, `NOTIFICATION-TYPE`, `TRAP-TYPE`, `TEXTUAL-CONVENTION`,
 `OBJECT-GROUP`, `NOTIFICATION-GROUP`, `MODULE-COMPLIANCE`, including multi
-sub-identifier assignments such as `::= { parent 3011 7124 3282 }`.
+sub-identifier assignments such as `::= { parent 3011 7124 3282 }` and modules
+anchored at a root arc, `::= { iso(1) std(0) iso8802(8802) ... }`, as the IEEE
+802.1 modules are.
 
 ## Development
 

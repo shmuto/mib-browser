@@ -358,11 +358,67 @@ END`;
     expect(builder.getUnresolvedOrphans()).toEqual([
       {
         name: 'danglingLeaf',
-        parentName: 'nowhereAnchor',
+        missingAnchor: 'nowhereAnchor',
         moduleName: 'DANGLING-MIB',
         fileName: 'dangling.txt',
       },
     ]);
+  });
+
+  // An anchor that does not resolve takes everything under it with it, so the
+  // count has to be the subtree, not the one node that failed to link
+  test('counts everything stranded under an unresolved anchor', () => {
+    const stranded = `STRANDED-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE FROM SNMPv2-SMI;
+strandedRoot OBJECT IDENTIFIER ::= { nowhereAnchor 1 }
+strandedBranch OBJECT IDENTIFIER ::= { strandedRoot 1 }
+strandedLeaf OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "three definitions, none of them in the tree"
+    ::= { strandedBranch 1 }
+END`;
+
+    const builder = new MibTreeBuilder();
+    const tree = builder.buildTree([parse(stranded, 'stranded.txt')]);
+    const orphans = builder.getUnresolvedOrphans();
+
+    expect(byName(tree).get('strandedLeaf')).toBeUndefined();
+    expect(orphans.map(o => o.name).sort()).toEqual([
+      'strandedBranch',
+      'strandedLeaf',
+      'strandedRoot',
+    ]);
+    // All three name the anchor that stranded them, not their own parent
+    expect(orphans.every(o => o.missingAnchor === 'nowhereAnchor')).toBe(true);
+  });
+
+  // IEEE modules anchor themselves with a named-number root arc
+  test('an anchor written in the named-number form resolves', () => {
+    const ieeeStyle = `IEEE-STYLE-MIB DEFINITIONS ::= BEGIN
+IMPORTS MODULE-IDENTITY, OBJECT-TYPE FROM SNMPv2-SMI;
+ieeeStyleMIB MODULE-IDENTITY
+    LAST-UPDATED "202601010000Z"
+    ORGANIZATION "test"
+    CONTACT-INFO "test"
+    DESCRIPTION  "anchored the way IEEE8021-SECY-MIB is"
+    ::= { iso(1) std(0) iso8802(8802) ieee802dot1(1)
+          ieee802dot1mibs(1) 3 }
+ieeeStyleLeaf OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "hangs off it"
+    ::= { ieeeStyleMIB 1 }
+END`;
+
+    const builder = new MibTreeBuilder();
+    const nodes = byName(builder.buildTree([parse(ieeeStyle, 'ieee.txt')]));
+
+    expect(nodes.get('ieeeStyleMIB')?.oid).toBe('1.0.8802.1.1.3');
+    expect(nodes.get('ieeeStyleLeaf')?.oid).toBe('1.0.8802.1.1.3.1');
+    expect(builder.getUnresolvedOrphans()).toEqual([]);
   });
 
   test('a tree that resolves completely reports no orphans', () => {

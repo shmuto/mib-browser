@@ -456,6 +456,37 @@ node.subid = [30065, 3011, 7124, 3282];
 node.oid = "1.3.6.1.4.1.30065.3011.7124.3282";
 ```
 
+#### What the definition scans are allowed to see
+
+Three passes over the text happen before any pattern looks for a definition,
+because a MIB file is full of text that looks like one:
+
+- **Comments go first** (RFC 2578 rules, see `removeComments`).
+- **`<NAME> MACRO ::= BEGIN ... END` blocks are blanked.** The SMI modules
+  everyone loads define the macros the other modules are written in, and their
+  bodies are full of the same keywords real definitions use. In SNMPv2-SMI the
+  `END` of one macro sits directly above `OBJECT-IDENTITY MACRO ::=`, which was
+  read as an object called `END` whose assignment was the `::= { 0 0 }` of
+  `zeroDotZero`, thirty lines further down — inventing one node and swallowing
+  another.
+- **String literals are blanked**, contents only. Descriptions quote example
+  definitions: IF-MIB explains `ifTestType` with
+  `noTest OBJECT IDENTIFIER ::= { 0 0 }` mid-sentence, and that example sits
+  *before* the object's own assignment, so the object took the example's parent
+  as its own.
+
+Both blanking passes preserve length and newlines, so a match found in the
+masked copy maps back to the real text by index — which is where the
+`DESCRIPTION` of a real definition is read from. Masking costs about a tenth of
+the parse.
+
+#### Names
+
+A descriptor may contain hyphens, and the standard tree is full of them:
+`mib-2`, `member-body`. Matching them with `\w+` stops at the hyphen, so `mib-2`
+was registered as a node called `2` and everything hanging off it became an
+orphan. Identifiers are matched with `[A-Za-z][\w-]*` throughout.
+
 #### The SYNTAX clause
 
 `SYNTAX` runs to the next clause keyword, but the type itself may contain one:
@@ -466,6 +497,19 @@ string depth, and only ends the clause at a keyword found at depth 0. The whole
 clause is kept on the node, and `parseSyntaxValues()` splits it into a base type
 plus enumerated values or a range when the details panel needs them — the same
 split the `TEXTUAL-CONVENTION` reader uses.
+
+#### Root arcs
+
+An assignment may start at a root arc rather than at a node another module
+defines, in either spelling: `::= { 1 3 6 1 4 1 99999 }` or, as every IEEE
+module writes it, `::= { iso(1) std(0) iso8802(8802) ... }`. The first element
+is parsed for a name in the named-number form, and a purely numeric one is
+resolved against the seed with that OID.
+
+`ccitt` (0) and `joint-iso-ccitt` (2) are seeded alongside `iso` for this: the
+SMI puts `zeroDotZero`, the null identifier, at 0.0 and modules point at it.
+A root with no children is not rendered, so an ordinary MIB set still shows the
+single `iso` tree.
 
 #### SMIv1 TRAP-TYPE
 

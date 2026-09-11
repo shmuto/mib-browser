@@ -339,25 +339,54 @@ export class MibTreeBuilder {
   }
 
   /**
-   * The nodes that never found a parent, after every rescue pass.
+   * Every definition that is not in the tree, after all the rescue passes.
    *
-   * These contribute nothing to the tree. Reporting them is the caller's job:
-   * an anchor that no loaded module defines is either a missing dependency -
-   * which `buildTree` raises on its own - or a module that refers to something
-   * nothing provides, which would otherwise vanish silently.
+   * A node that never found a parent takes its whole subtree with it: the
+   * module anchor of IEEE8021-SECY-MIB failing to resolve leaves all 185 of
+   * its definitions out of the tree, not one. So the orphans are walked, and
+   * each stranded node is returned with the anchor that stranded it - which
+   * may be an anchor named by a different file, since a module can hang off
+   * another module's orphan.
+   *
+   * Reporting them is the caller's job: an anchor that no loaded module
+   * defines is either a missing dependency - which `buildTree` raises on its
+   * own - or a module that refers to something nothing provides, which would
+   * otherwise vanish silently.
    */
   public getUnresolvedOrphans(): Array<{
     name: string;
-    parentName: string;
+    /** The name that could not be resolved, for this node or for the orphan above it */
+    missingAnchor: string;
     moduleName: string;
     fileName?: string;
   }> {
-    return this.orphanNodes.map(node => ({
-      name: node.name,
-      parentName: node.parentName ?? '',
-      moduleName: node.moduleName,
-      fileName: node.fileName,
-    }));
+    const stranded: Array<{
+      name: string;
+      missingAnchor: string;
+      moduleName: string;
+      fileName?: string;
+    }> = [];
+
+    for (const orphan of this.orphanNodes) {
+      const missingAnchor = orphan.parentName ?? '';
+      const stack: TreeBuildNode[] = [orphan];
+
+      while (stack.length > 0) {
+        const node = stack.pop()!;
+        stranded.push({
+          name: node.name,
+          missingAnchor,
+          moduleName: node.moduleName,
+          fileName: node.fileName,
+        });
+
+        for (const child of node.children) {
+          stack.push(child as TreeBuildNode);
+        }
+      }
+    }
+
+    return stranded;
   }
 
   // === Pass 2.5: Orphan Rescue ===
@@ -440,6 +469,13 @@ export class MibTreeBuilder {
   // === Helper: Seed node registration ===
   private registerSeedNodes(): void {
     const seeds: Array<{ name: string; oid: string; subid: number }> = [
+      // The other two root arcs. Nothing in SNMP hangs off them, but the SMI
+      // itself puts `zeroDotZero` - the null identifier - at 0.0, and modules
+      // point at it; without a node for the arc those definitions resolve to
+      // nothing. Roots with no children are not rendered, so an ordinary MIB
+      // set never sees them.
+      { name: 'ccitt', oid: '0', subid: 0 },
+      { name: 'joint-iso-ccitt', oid: '2', subid: 2 },
       { name: 'iso', oid: '1', subid: 1 },
       { name: 'org', oid: '1.3', subid: 3 },
       { name: 'dod', oid: '1.3.6', subid: 6 },
@@ -536,10 +572,15 @@ export class MibTreeBuilder {
   }
 
   private buildTreeFromSeeds(): MibNode[] {
-    // Return root structure from seed nodes (iso node only, or all top-level)
-    const isoNode = this.seedMap.get('iso');
-    if (isoNode) {
-      return [this.convertToMibNode(isoNode)];
+    // The root arcs, in OID order. `iso` is always rendered - it is the tree
+    // everyone came for, and an empty one still says "nothing loaded" - while
+    // ccitt and joint-iso-ccitt appear only once something is under them.
+    const roots = this.seedNodes.filter(seed => !seed.parentName);
+
+    if (roots.length > 0) {
+      return roots
+        .filter(root => root.name === 'iso' || root.children.length > 0)
+        .map(root => this.convertToMibNode(root));
     }
 
     // Fallback: return all seed nodes

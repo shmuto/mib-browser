@@ -57,6 +57,9 @@ describe('the OIDs the README promises', () => {
     ['extLabel', '1.3.6.1.4.1.99999.2.1.1.1.2'],
     ['v1CardRemoved', '1.3.6.1.4.1.99999.5.0.1'],
     ['v1CardInserted', '1.3.6.1.4.1.99999.5.0.2'],
+    ['testIeeeAnchorMIB', '1.0.8802.1.1.99999'],
+    ['ieee-anchor-leaf', '1.0.8802.1.1.99999.1'],
+    ['member-body', '1.2'],
   ])('%s resolves to %s', (name, oid) => {
     expect(nodesByName.get(name)?.oid).toBe(oid);
   });
@@ -143,6 +146,27 @@ describe('the shapes each fixture stands for', () => {
     expect(kept).toContain('v1CardInserted');
     expect(kept).toContain('testV1Traps');
     expect(kept).not.toContain('v1TrapReason');
+  });
+
+  // TEST-IEEE-ANCHOR-MIB: the shape of an IEEE 802.1 module
+  test('a module anchored at a named-number root arc lands under it', () => {
+    // Neither std(0) nor iso8802(8802) has a node of its own
+    expect(nodesByName.get('testIeeeAnchorMIB')?.oid).toBe('1.0.8802.1.1.99999');
+    expect(nodesByName.has('std')).toBe(false);
+    expect(nodesByName.has('iso8802')).toBe(false);
+  });
+
+  test('hyphenated descriptors keep their hyphens', () => {
+    expect(nodesByName.has('member-body')).toBe(true);
+    expect(nodesByName.has('ieee-anchor-leaf')).toBe(true);
+    // The truncations the parser used to register instead
+    expect(nodesByName.has('body')).toBe(false);
+    expect(nodesByName.has('leaf')).toBe(false);
+  });
+
+  test('a definition quoted in a description is not one', () => {
+    expect(nodesByName.has('noTest')).toBe(false);
+    expect(nodesByName.get('ieeeAnchorNote')?.oid).toBe('1.0.8802.1.1.99999.2');
   });
 
   // TEST-EXTENSION-MIB imports its anchor from TEST-BASE-MIB

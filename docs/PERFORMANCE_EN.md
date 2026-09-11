@@ -190,6 +190,14 @@ searched the parent's existing children linearly — quadratic for `enterprises`
 with hundreds of vendor MIBs under it. A per-parent `name|subid` index makes it
 a map lookup.
 
+**Masking is done once, not once per block.** Definitions are searched for in a
+copy of the file with macro bodies and string contents blanked out. Building
+that copy with a per-character regex, and building it again for every
+OBJECT-TYPE block, cost more than the parse it protects: blanking now copies
+runs of spaces, and the OBJECT-TYPE blocks carry their offsets so the one
+whole-file copy can be sliced. *272 ms → 177 ms over 3.3 MB, against 159 ms
+before masking existed.*
+
 **A whitespace-only file made the line-anchored patterns quadratic.** With the
 `m` flag `^` already matches at every line start, so the `^\s*` those patterns
 began with bought nothing - but it could run across every blank line left in the
