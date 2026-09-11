@@ -233,6 +233,7 @@ const HAS_MODULE_COMPLIANCE = /MODULE-COMPLIANCE/i;
 const HAS_OBJECT_GROUP = /OBJECT-GROUP/i;
 const HAS_NOTIFICATION_GROUP = /NOTIFICATION-GROUP/i;
 const HAS_TEXTUAL_CONVENTION = /TEXTUAL-CONVENTION/i;
+const HAS_TRAP_TYPE = /TRAP-TYPE/i;
 
 /**
  * Extract OBJECT-TYPE definitions
@@ -465,11 +466,13 @@ export function filterTreeByQuery(tree: MibNode[], query: string): MibNode[] {
 
 /**
  * Whether a node is an SNMP notification - a trap or an inform.
- * These are the NOTIFICATION-TYPE definitions of SMIv2.
+ * These are the NOTIFICATION-TYPE definitions of SMIv2 and the TRAP-TYPE
+ * definitions of SMIv1.
  * @param node MIB node
  */
 export function isNotificationNode(node: MibNode): boolean {
-  return node.type.toUpperCase() === 'NOTIFICATION-TYPE';
+  const type = node.type.toUpperCase();
+  return type === 'NOTIFICATION-TYPE' || type === 'TRAP-TYPE';
 }
 
 /**
@@ -557,7 +560,7 @@ export function parseMibModule(content: string, fileName?: string): import('../t
   const objects: import('../types/mib').RawMibObject[] = [];
 
   // Add OID assignments (OBJECT IDENTIFIER, MODULE-IDENTITY, OBJECT-IDENTITY, NOTIFICATION-TYPE)
-  oidAssignments.forEach(({ name, parent, subids, description, type, status }) => {
+  oidAssignments.forEach(({ name, parent, subids, description, type, status, variables }) => {
     objects.push({
       name,
       parentName: parent,
@@ -565,6 +568,7 @@ export function parseMibModule(content: string, fileName?: string): import('../t
       type: type || 'OBJECT IDENTIFIER',
       description,
       status,
+      variables,
       fileName,
     });
   });
@@ -578,6 +582,14 @@ export function parseMibModule(content: string, fileName?: string): import('../t
         fileName,
       });
     }
+  });
+
+  // Add SMIv1 TRAP-TYPEs
+  extractTrapTypes(cleanedWithoutImports).forEach(trap => {
+    objects.push({
+      ...trap,
+      fileName,
+    });
   });
 
   // Extract TEXTUAL-CONVENTIONs
@@ -634,8 +646,8 @@ function parseOidBlock(blockContent: string): { parent: string; subids: number[]
  */
 function extractOidAssignmentsRaw(
   content: string
-): Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string; status?: string }> {
-  const assignments: Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string; status?: string }> = [];
+): Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string; status?: string; variables?: string[] }> {
+  const assignments: Array<{ name: string; parent: string; subids: number[]; description?: string; type?: string; status?: string; variables?: string[] }> = [];
 
   // Skip whole-file scans for constructs this module does not use at all
   const hasModuleIdentity = containsKeyword(content, HAS_MODULE_IDENTITY);
@@ -729,6 +741,9 @@ function extractOidAssignmentsRaw(
     const statusMatch = fullMatch.match(/STATUS\s+([\w\-]+)/i);
     const status = statusMatch ? statusMatch[1].trim() : '';
 
+    // The OBJECTS clause lists the varbinds the notification carries
+    const variables = parseNameList(fullMatch.match(/\bOBJECTS\s*\{([^}]*)\}/i)?.[1]);
+
     assignments.push({
       name,
       parent: parsed.parent,
@@ -736,6 +751,7 @@ function extractOidAssignmentsRaw(
       description,
       type: 'NOTIFICATION-TYPE',
       status,
+      variables,
     });
   }
 
@@ -821,6 +837,133 @@ function extractOidAssignmentsRaw(
   }
 
   return assignments;
+}
+
+/**
+ * Split a brace list of identifiers - `{ ifIndex, ifAdminStatus }` - into names
+ * @param inner The text between the braces, or undefined when there was no clause
+ */
+function parseNameList(inner: string | undefined): string[] | undefined {
+  if (!inner) return undefined;
+
+  const names = inner
+    .split(',')
+    .map(name => name.trim())
+    .filter(name => /^[\w\-]+$/.test(name));
+
+  return names.length > 0 ? names : undefined;
+}
+
+/**
+ * Find the specific-trap number a TRAP-TYPE block is assigned, skipping any
+ * `::=` that appears inside a DESCRIPTION or other string literal
+ * @returns The number and where the assignment starts, or null if the block
+ *          has no bare numeric assignment
+ */
+function findTrapValue(
+  block: string,
+  trackStrings: boolean
+): { value: number; index: number } | null {
+  let inString = false;
+
+  for (let i = 0; i < block.length; i++) {
+    const code = block.charCodeAt(i);
+
+    if (trackStrings) {
+      if (inString) {
+        if (code === 34 /* " */) inString = false;
+        continue;
+      }
+      if (code === 34 /* " */) {
+        inString = true;
+        continue;
+      }
+    }
+
+    if (code !== 58 /* : */) continue;
+    if (block.charCodeAt(i + 1) !== 58 || block.charCodeAt(i + 2) !== 61 /* = */) continue;
+
+    const value = block.slice(i + 3).match(/^\s*(\d+)/);
+    return value ? { value: parseInt(value[1], 10), index: i } : null;
+  }
+
+  return null;
+}
+
+/**
+ * Extract SMIv1 TRAP-TYPE definitions (RFC 1215).
+ *
+ * These predate NOTIFICATION-TYPE and are still how most enterprise MIBs
+ * declare their traps:
+ *
+ *   linkDown TRAP-TYPE
+ *       ENTERPRISE  acmeProducts
+ *       VARIABLES   { ifIndex, ifOperStatus }
+ *       DESCRIPTION "..."
+ *       ::= 3
+ *
+ * The value is a bare specific-trap number rather than an OID, so the node is
+ * placed the way RFC 3584 section 3.1 maps a trap onto an OID: under the
+ * ENTERPRISE node, through a `0` sub-identifier - `acmeProducts.0.3`. (The one
+ * exception in that mapping, ENTERPRISE `snmp` for the six generic traps of
+ * RFC 1215, is not applied: those live at a fixed OID under `snmpTraps`, which
+ * a module declaring its own traps never refers to.)
+ */
+function extractTrapTypes(content: string): import('../types/mib').RawMibObject[] {
+  const traps: import('../types/mib').RawMibObject[] = [];
+
+  if (!containsKeyword(content, HAS_TRAP_TYPE)) return traps;
+
+  // Each definition runs from its own header line to the next one (or to the
+  // end of the file), so a malformed block cannot swallow the trap after it.
+  const header = /^[ \t]*(\w+)[ \t]+TRAP-TYPE\b/gim;
+  const starts: Array<{ name: string; index: number }> = [];
+
+  let match;
+  while ((match = header.exec(content)) !== null) {
+    starts.push({ name: match[1], index: match.index });
+  }
+
+  // A DESCRIPTION explaining syntax can contain a `::=` of its own, so the
+  // assignment is only looked for outside string literals - unless the quotes
+  // in the file do not pair up, in which case tracking them would be worse
+  // than ignoring them.
+  const trackStrings = hasBalancedQuotes(content);
+
+  for (let i = 0; i < starts.length; i++) {
+    const { name, index } = starts[i];
+    const end = i + 1 < starts.length ? starts[i + 1].index : content.length;
+    const block = content.slice(index, end);
+
+    // ::= <specific-trap number>. A TRAP-TYPE has no braces around its value;
+    // anything that does is some other construct and is left alone.
+    const assignment = findTrapValue(block, trackStrings);
+    if (!assignment) continue;
+
+    // The clauses end at the assignment. The slice above runs to the next
+    // TRAP-TYPE, so whatever definitions follow this one are in it too - and
+    // their DESCRIPTION and STATUS are not this trap's.
+    const clauses = block.slice(0, assignment.index);
+
+    const enterpriseMatch = clauses.match(/\bENTERPRISE\s+([\w\-]+)/i);
+    if (!enterpriseMatch) continue; // Nothing to hang the trap off
+
+    const descMatch = clauses.match(/DESCRIPTION\s+"([\s\S]*?)"/i);
+    const statusMatch = clauses.match(/\bSTATUS\s+([\w\-]+)/i);
+
+    traps.push({
+      name,
+      parentName: enterpriseMatch[1],
+      subid: [0, assignment.value],
+      type: 'TRAP-TYPE',
+      description: descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : '',
+      // STATUS is not part of the RFC 1215 macro, but vendor MIBs add it
+      status: statusMatch ? statusMatch[1].trim() : '',
+      variables: parseNameList(clauses.match(/\bVARIABLES\s*\{([^}]*)\}/i)?.[1]),
+    });
+  }
+
+  return traps;
 }
 
 /**

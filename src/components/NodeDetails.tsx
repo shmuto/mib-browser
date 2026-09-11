@@ -81,6 +81,25 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
     return tcIndexRef.current.byName.get(syntaxTypeName) || null;
   }, [node?.syntax, mibs, storedTcIndex]);
 
+  // Resolve a notification's varbinds to nodes, so each one can be clicked
+  // through to. A module can carry objects it imports, so some of them may not
+  // be in the tree at all - those stay as plain text.
+  const variableNodes = useMemo((): Map<string, MibNode> => {
+    const found = new Map<string, MibNode>();
+    if (!node?.variables || node.variables.length === 0) return found;
+
+    const wanted = new Set(node.variables);
+    const stack = [...tree];
+    while (stack.length > 0 && found.size < wanted.size) {
+      const current = stack.pop()!;
+      if (wanted.has(current.name) && !found.has(current.name)) {
+        found.set(current.name, current);
+      }
+      for (const child of current.children) stack.push(child);
+    }
+    return found;
+  }, [node?.variables, tree]);
+
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -128,6 +147,7 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
       node.syntax ? `Syntax: ${node.syntax}` : '',
       node.access ? `Access: ${node.access}` : '',
       node.status ? `Status: ${node.status}` : '',
+      node.variables?.length ? `Variables: ${node.variables.join(', ')}` : '',
       node.description ? `Description: ${node.description}` : '',
     ].filter(Boolean).join('\n');
 
@@ -222,6 +242,39 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
 
         {node.access && <DetailRow label="Access" value={node.access} />}
         {node.status && <DetailRow label="Status" value={node.status} />}
+
+        {node.variables && node.variables.length > 0 && (
+          <div>
+            <dt className="text-sm font-medium text-gray-600 mb-1">
+              Variables <span className="text-xs text-gray-400">({node.variables.length})</span>
+            </dt>
+            <dd className="text-sm text-gray-800 bg-amber-50 p-3 rounded border border-amber-200">
+              <div className="flex flex-wrap gap-2">
+                {node.variables.map(variable => {
+                  const target = variableNodes.get(variable);
+                  return target ? (
+                    <button
+                      key={variable}
+                      onClick={() => onSelectNode?.(target)}
+                      className="px-2 py-1 bg-amber-100 text-amber-800 rounded text-xs font-mono hover:bg-amber-200 transition-colors cursor-pointer"
+                      title={target.oid}
+                    >
+                      {variable}
+                    </button>
+                  ) : (
+                    <span
+                      key={variable}
+                      className="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs font-mono"
+                      title="Not in the loaded tree"
+                    >
+                      {variable}
+                    </span>
+                  );
+                })}
+              </div>
+            </dd>
+          </div>
+        )}
 
         {node.description && (
           <div>

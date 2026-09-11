@@ -245,7 +245,8 @@ runs against a `useDeferredValue` copy of the query, so typing stays responsive
 while a large tree is re-filtered at lower priority.
 
 **Traps only** is the same shape of filter, on node type instead of text:
-`filterTreeToNotifications` keeps `NOTIFICATION-TYPE` nodes and their ancestors.
+`filterTreeToNotifications` keeps notification nodes — SMIv2 `NOTIFICATION-TYPE`
+and SMIv1 `TRAP-TYPE` alike — and their ancestors.
 It is applied to `mergedTree` *before* the search, so searching while the filter
 is on searches the traps. What is left is only the branches leading to
 notifications, so `App` expands them automatically — otherwise every trap would

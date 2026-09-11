@@ -50,7 +50,7 @@ export default function TreeExpandControls({
 
         <label
           className="flex items-center gap-2 cursor-pointer"
-          title="Show only NOTIFICATION-TYPE nodes (traps and informs) and the branches leading to them"
+          title="Show only notification nodes - NOTIFICATION-TYPE and SMIv1 TRAP-TYPE - and the branches leading to them"
         >
           <input
             type="checkbox"

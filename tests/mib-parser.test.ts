@@ -477,3 +477,195 @@ END`,
     expect(countTreeNodes(filterTreeToNotifications(tree), isNotificationNode)).toBe(2);
   });
 });
+
+describe('SMIv1 TRAP-TYPE', () => {
+  const V1_TRAPS = `V1-TRAP-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, enterprises FROM RFC1155-SMI
+        TRAP-TYPE FROM RFC-1215;
+v1Root OBJECT IDENTIFIER ::= { enterprises 5252 }
+v1Reason OBJECT-TYPE
+    SYNTAX      INTEGER
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "why it happened"
+    ::= { v1Root 1 }
+cardPulled TRAP-TYPE
+    ENTERPRISE  v1Root
+    VARIABLES   { v1Reason }
+    DESCRIPTION "a card was pulled"
+    ::= 3
+cardPushedBack TRAP-TYPE
+    ENTERPRISE  v1Root
+    DESCRIPTION "a card came back"
+    ::= 4
+END`;
+
+  const module = parseMibModule(V1_TRAPS, 'v1-trap.txt');
+  const tree = new MibTreeBuilder().buildTree([module]);
+  const byName = new Map(flattenTree(tree).map(n => [n.name, n]));
+
+  test('places a trap at enterprise.0.specific', () => {
+    // RFC 3584 3.1: the ENTERPRISE node, a 0, then the specific-trap number
+    expect(byName.get('cardPulled')!.oid).toBe('1.3.6.1.4.1.5252.0.3');
+    expect(byName.get('cardPushedBack')!.oid).toBe('1.3.6.1.4.1.5252.0.4');
+  });
+
+  test('keeps the type and the description', () => {
+    const trap = byName.get('cardPulled')!;
+    expect(trap.type).toBe('TRAP-TYPE');
+    expect(trap.description).toBe('a card was pulled');
+  });
+
+  test('records the VARIABLES a trap carries', () => {
+    expect(byName.get('cardPulled')!.variables).toEqual(['v1Reason']);
+    expect(byName.get('cardPushedBack')!.variables).toBeUndefined();
+  });
+
+  test('counts as a notification', () => {
+    expect(isNotificationNode(byName.get('cardPulled')!)).toBe(true);
+    expect(isNotificationNode(byName.get('v1Reason')!)).toBe(false);
+
+    const kept = flattenTree(filterTreeToNotifications(tree)).map(n => n.name);
+    expect(kept).toContain('cardPulled');
+    expect(kept).toContain('cardPushedBack');
+    expect(kept).not.toContain('v1Reason');
+  });
+
+  test('leaves the rest of the module alone', () => {
+    expect(byName.get('v1Reason')!.oid).toBe('1.3.6.1.4.1.5252.1');
+    expect(byName.get('v1Reason')!.access).toBe('read-only');
+  });
+
+  test('skips a trap with no ENTERPRISE without losing the next one', () => {
+    const parsed = parseMibModule(
+      `BROKEN-TRAP-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM RFC1155-SMI TRAP-TYPE FROM RFC-1215;
+brokenRoot OBJECT IDENTIFIER ::= { enterprises 5253 }
+noEnterprise TRAP-TYPE
+    DESCRIPTION "nowhere to hang this"
+    ::= 1
+stillParsed TRAP-TYPE
+    ENTERPRISE  brokenRoot
+    DESCRIPTION "reached all the same"
+    ::= 2
+END`,
+      'broken.txt'
+    );
+
+    const names = parsed.objects.map(o => o.name);
+    expect(names).not.toContain('noEnterprise');
+    expect(names).toContain('stillParsed');
+  });
+
+  test('reads the assignment, not a ::= inside the DESCRIPTION', () => {
+    const parsed = parseMibModule(
+      `PROSE-TRAP-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM RFC1155-SMI TRAP-TYPE FROM RFC-1215;
+proseRoot OBJECT IDENTIFIER ::= { enterprises 5256 }
+fanFailed TRAP-TYPE
+    ENTERPRISE  proseRoot
+    DESCRIPTION
+        "Sent on failure. The older form of this trap was ::= 99, which is
+         prose here and not an assignment."
+    REFERENCE   "hardware guide"
+    ::= 17
+laterObject OBJECT-TYPE
+    SYNTAX      INTEGER
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "defined after the trap"
+    ::= { proseRoot 1 }
+END`,
+      'prose.txt'
+    );
+
+    const trap = parsed.objects.find(o => o.name === 'fanFailed')!;
+    expect(trap.subid).toEqual([0, 17]);
+  });
+
+  test('does not borrow clauses from the definition that follows it', () => {
+    const parsed = parseMibModule(
+      `FOLLOWED-TRAP-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM RFC1155-SMI TRAP-TYPE FROM RFC-1215;
+followedRoot OBJECT IDENTIFIER ::= { enterprises 5257 }
+bareTrap TRAP-TYPE
+    ENTERPRISE  followedRoot
+    ::= 1
+laterObject OBJECT-TYPE
+    SYNTAX      INTEGER
+    ACCESS      read-only
+    STATUS      mandatory
+    DESCRIPTION "belongs to the object, not to the trap"
+    ::= { followedRoot 1 }
+END`,
+      'followed.txt'
+    );
+
+    const trap = parsed.objects.find(o => o.name === 'bareTrap')!;
+    expect(trap.description).toBe('');
+    expect(trap.status).toBe('');
+    expect(parsed.objects.find(o => o.name === 'laterObject')?.description)
+      .toBe('belongs to the object, not to the trap');
+  });
+
+  test('ignores a TRAP-TYPE that only appears in the IMPORTS clause', () => {
+    const parsed = parseMibModule(
+      `IMPORT-ONLY-MIB DEFINITIONS ::= BEGIN
+IMPORTS TRAP-TYPE FROM RFC-1215
+        enterprises FROM RFC1155-SMI;
+importOnlyRoot OBJECT IDENTIFIER ::= { enterprises 5254 }
+END`,
+      'import-only.txt'
+    );
+
+    expect(parsed.objects.map(o => o.type)).not.toContain('TRAP-TYPE');
+  });
+
+  test('reports the module a missing ENTERPRISE node comes from', () => {
+    const parsed = parseMibModule(
+      `DANGLING-TRAP-MIB DEFINITIONS ::= BEGIN
+IMPORTS absentAnchor FROM TEST-ABSENT-MIB
+        TRAP-TYPE FROM RFC-1215;
+dangling TRAP-TYPE
+    ENTERPRISE  absentAnchor
+    DESCRIPTION "its anchor is not loaded"
+    ::= 1
+END`,
+      'dangling.txt'
+    );
+
+    expect(() => new MibTreeBuilder().buildTree([parsed])).toThrow(/TEST-ABSENT-MIB/);
+  });
+});
+
+describe('NOTIFICATION-TYPE OBJECTS', () => {
+  test('records the varbinds a notification carries', () => {
+    const parsed = parseMibModule(
+      `OBJECTS-MIB DEFINITIONS ::= BEGIN
+IMPORTS NOTIFICATION-TYPE, OBJECT-TYPE, enterprises FROM SNMPv2-SMI;
+objRoot OBJECT IDENTIFIER ::= { enterprises 5255 }
+objReason OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "why"
+    ::= { objRoot 1 }
+objWhen OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "when"
+    ::= { objRoot 2 }
+somethingHappened NOTIFICATION-TYPE
+    OBJECTS     { objReason, objWhen }
+    STATUS      current
+    DESCRIPTION "it happened"
+    ::= { objRoot 3 }
+END`,
+      'objects.txt'
+    );
+
+    const notification = parsed.objects.find(o => o.name === 'somethingHappened')!;
+    expect(notification.variables).toEqual(['objReason', 'objWhen']);
+  });
+});

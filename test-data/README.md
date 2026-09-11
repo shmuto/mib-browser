@@ -22,15 +22,18 @@ picture, or individual files to isolate a case.
 | `TEST-CONFLICT-A.txt` / `TEST-CONFLICT-B.txt` | Two files declaring the same module name (`TEST-CONFLICT-MIB`) with the same object names but different `SYNTAX`, `MAX-ACCESS`, `STATUS` and `DESCRIPTION`. Loading both raises the conflict panel. |
 | `TEST-TC-ONLY-MIB.txt` | A module defining nothing but `TEXTUAL-CONVENTION`s, as `IPV6-TC` (RFC 2465) does. It contributes no nodes to the tree, but must still be accepted on upload: other modules import its types, and the details panel resolves `SYNTAX` against it. |
 | `TEST-EMPTY-MODULE-MIB.txt` | A module whose body is entirely commented out, as RFC-1212 is shipped in most MIB collections. It is a valid module that defines nothing: uploading it must succeed and contribute 0 nodes, so a bulk upload of a standard MIB directory does not report errors for files like this. |
+| `TEST-V1-TRAP-MIB.txt` | An SMIv1 module (RFC 1155 / RFC 1215) whose traps are declared with `TRAP-TYPE`. A trap has no OID of its own — an `ENTERPRISE` node and a specific-trap number — so it has to land at `<enterprise>.0.<number>`. One trap carries a `VARIABLES` clause and one carries none. |
 | `TEST-ODD-HEADER-MIB.txt` | Module name, then a comment, then `DEFINITIONS IMPLICIT TAGS ::= BEGIN` on a later line. Real MIBs are laid out this way, and the module name has to be found across the comment. |
 
-Expected results once all nine are loaded:
+Expected results once all ten are loaded:
 
 - 1 conflict pair (`TEST-CONFLICT-A.txt` ⇄ `TEST-CONFLICT-B.txt`, 3 differing objects)
 - 1 missing-dependency warning naming `TEST-ABSENT-MIB`
 - `deepLeaf` resolves to `1.3.6.1.4.1.99999.3.3011.7124.3282.1`
 - `namedLeaf` resolves to `1.3.6.1.4.1.99999.3.111.802.1.1`
 - `oddCounter` resolves to `1.3.6.1.4.1.99998.1`
+- `v1CardRemoved` resolves to `1.3.6.1.4.1.99999.5.0.1` and lists `v1TrapReason`
+  under Variables; both it and `v1CardInserted` survive the "Traps Only" filter
 - `TestPortState` and `TestMacAddress` are offered as enumerated values in the
   details panel, though `TEST-TC-ONLY-MIB` adds no rows to the tree
 

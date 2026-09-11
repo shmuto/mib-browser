@@ -149,6 +149,7 @@ export class MibTreeBuilder {
           access: obj.access || '',
           status: obj.status || '',
           description: obj.description || '',
+          variables: obj.variables,
           moduleName: mod.moduleName,
           mibName: mod.moduleName,
           fileName: obj.fileName || mod.fileName,
@@ -517,6 +518,7 @@ export class MibTreeBuilder {
       children: node.children.map(c => this.convertToMibNode(c as TreeBuildNode)),
       mibName: node.moduleName, // Use moduleName from TreeBuildNode
       fileName: node.fileName, // Include fileName
+      variables: node.variables, // Varbinds of a notification, if any
       isExpanded: false,
     };
   }

@@ -430,6 +430,44 @@ node.subid = [30065, 3011, 7124, 3282];
 node.oid = "1.3.6.1.4.1.30065.3011.7124.3282";
 ```
 
+#### SMIv1 TRAP-TYPE
+
+An SMIv1 trap (RFC 1215) carries no OID. It names the node it belongs to and a
+specific-trap number:
+
+```
+v1CardRemoved TRAP-TYPE
+    ENTERPRISE  testV1Traps
+    VARIABLES   { v1TrapReason }
+    DESCRIPTION "A card was removed."
+    ::= 1
+```
+
+`extractTrapTypes()` maps the pair the way RFC 3584 section 3.1 does — under the
+`ENTERPRISE` node, through a `0` sub-identifier — by reusing the multi-subid
+mechanism above:
+
+```typescript
+node.parentName = "testV1Traps";
+node.subid = [0, 1];
+node.oid = "1.3.6.1.4.1.99999.5.0.1";
+```
+
+So the trap resolves like any other node: if the module its `ENTERPRISE` comes
+from is not loaded, it becomes an orphan and that module is named in the missing
+dependency report. Its `VARIABLES` are kept on the node (as are the `OBJECTS` of
+an SMIv2 `NOTIFICATION-TYPE`) and shown in the details panel, and
+`isNotificationNode()` accepts `TRAP-TYPE`, so the "Traps Only" filter covers
+both notation styles.
+
+The one case that mapping does not cover is `ENTERPRISE snmp`, the six generic
+traps of RFC 1215, which RFC 3584 places at a fixed OID under `snmpTraps`
+instead. A module declaring its own traps never uses it, so those six would
+resolve to `snmp.0.<n>` rather than their standard OIDs.
+
+Each definition is sliced from its own header line to the next one, so a block
+missing its `::=` value cannot swallow the trap that follows it.
+
 ---
 
 ## OID Hierarchy Management
@@ -922,7 +960,8 @@ function detectConflicts(mibs: Mib[], flatTree: MibNode[]): Map<string, Conflict
 | `parseMibModule()` | `mib-parser.ts` | Parse MIB text into a `ParsedModule` |
 | `validateMibContent()` | `mib-parser.ts` | Reject files that are not MIBs |
 | `filterTreeByQuery()` | `mib-parser.ts` | Filter the tree to search matches |
-| `filterTreeToNotifications()` | `mib-parser.ts` | Filter the tree to `NOTIFICATION-TYPE` nodes |
+| `filterTreeToNotifications()` | `mib-parser.ts` | Filter the tree to `NOTIFICATION-TYPE` / `TRAP-TYPE` nodes |
+| `extractTrapTypes()` | `mib-parser.ts` | Map SMIv1 `TRAP-TYPE` definitions onto `<enterprise>.0.<specific>` |
 | `rebuildAllTrees()` | `useMibStorage.ts` | Full rebuild, with error handling |
 
 ---
