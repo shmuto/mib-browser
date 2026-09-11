@@ -78,8 +78,31 @@ src/
 docs/            architecture and internals
 tests/           unit tests (bun test)
 test-data/       MIB fixtures and a generator for large corpora
-public/          static assets, including a sample MIB
+public/          static assets: the icons, the link-preview image, a sample MIB
+scripts/         source for the generated images in public/
 ```
+
+## Icons and link previews
+
+`public/favicon.svg` is the icon; `favicon.png` (96px) and `apple-touch-icon.png`
+(180px) are renders of it for browsers that want a bitmap. `public/og-image.png`
+is what Slack, Discord, Teams and the rest show when the link is pasted, through
+the Open Graph tags in [`index.html`](./index.html).
+
+Those tags carry absolute URLs — a relative one unfurls without an image — so
+they name `https://shmuto.github.io/mib-browser/`. A fork that publishes
+somewhere else wants its own address there.
+
+To change the preview, edit [`scripts/og-image.html`](./scripts/og-image.html)
+and render it back at exactly 1200x630:
+
+```bash
+npx playwright screenshot --viewport-size=1200,630 \
+  scripts/og-image.html public/og-image.png
+```
+
+Slack caches an unfurl for a while; a changed image shows up sooner if the
+message is posted with `?1` on the end of the URL.
 
 ## Documentation
 
