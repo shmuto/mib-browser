@@ -8,8 +8,8 @@
     npx playwright screenshot --viewport-size=1200,630 \
       scripts/og-image.html public/og-image.png
 
-  Keep it self-contained: no external fonts or images, so the render does not
-  depend on the network.
+  Keep it offline: system fonts only, and the one image it pulls in is the
+  favicon next door, so the render never depends on the network.
 -->
 <html lang="en">
   <head>
@@ -37,7 +37,7 @@
       }
 
       .brand { display: flex; align-items: center; gap: 20px; margin-bottom: 34px; }
-      .brand svg { width: 76px; height: 76px; border-radius: 17px; }
+      .brand img { width: 76px; height: 76px; }
       .brand h1 { margin: 0; font-size: 54px; line-height: 1.05; letter-spacing: -0.02em; }
 
       .tagline {
@@ -127,16 +127,8 @@
   <body>
     <div class="left">
       <div class="brand">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-          <rect width="32" height="32" rx="7" fill="#2563eb" />
-          <g fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M11 11.5v11h6" />
-            <path d="M11 16h6" />
-          </g>
-          <circle cx="11" cy="8.5" r="3" fill="#ffffff" />
-          <circle cx="21" cy="16" r="3" fill="#ffffff" />
-          <circle cx="21" cy="22.5" r="3" fill="#ffffff" />
-        </svg>
+        <!-- The icon itself, not a copy of it: a second drawing would drift -->
+        <img src="../public/favicon.svg" alt="" />
         <h1>SNMP MIB<br />Browser</h1>
       </div>
 
