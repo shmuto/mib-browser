@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   validateMibContent,
   parseSyntaxValues,
+  findNodeByOid,
   parseMibModule,
   filterTreeByQuery,
   filterTreeToNotifications,
@@ -107,20 +108,42 @@ END`;
 
   // The header pattern once used `[^;]*?` to skip to `::=`, which made a
   // failed match quadratic in file length - on a file the user supplies.
-  test('the header match stays linear on input that never matches', () => {
-    const timeFor = (lines: number) => {
-      const input = 'A DEFINITIONS x\n'.repeat(lines);
+  // The fastest of several runs is taken for each size: a single timing picks
+  // up whatever else the machine was doing, and the ratio of two noisy numbers
+  // is noisier still.
+  const fastestRun = (input: string, runs = 3): number => {
+    let fastest = Infinity;
+    for (let i = 0; i < runs; i++) {
       const start = performance.now();
       validateMibContent(input);
-      return performance.now() - start;
-    };
+      fastest = Math.min(fastest, performance.now() - start);
+    }
+    return fastest;
+  };
 
-    timeFor(4000); // warm up
-    const small = Math.max(timeFor(8000), 0.05);
-    const large = timeFor(32000);
+  const staysLinear = (line: string) => {
+    const small = Math.max(fastestRun(line.repeat(8000)), 0.05);
+    const large = fastestRun(line.repeat(32000));
 
     // 4x the input. Linear would be ~4x; quadratic would be ~16x.
     expect(large / small).toBeLessThan(8);
+  };
+
+  test('the header match stays linear on input that never matches', () => {
+    validateMibContent('A DEFINITIONS x\n'.repeat(4000)); // warm up
+    staysLinear('A DEFINITIONS x\n');
+  });
+
+  // Comments come out as blank lines, so a file that is all comments - a
+  // commented-out module, or a wall of `-----` rules - left the header pattern
+  // matching `^\s*` across the whole file from every line in it.
+  test.each([
+    ['a file that is all comments', '-- a note about the thing\n'],
+    ['a file of hyphen rules', '-'.repeat(80) + '\n'],
+    ['a file of blank lines', '   \n'],
+  ])('stays linear on %s', (_label, line) => {
+    validateMibContent(line.repeat(4000)); // warm up
+    staysLinear(line);
   });
 });
 
@@ -798,5 +821,130 @@ END`;
       { name: 'not-available', value: -1 },
       { name: 'ok', value: 0 },
     ]);
+  });
+});
+
+describe('comments', () => {
+  const COMMENT_MIB = `COMMENT-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, Integer32, enterprises FROM SNMPv2-SMI;
+
+-------------------- Objects OBJECT-TYPE banner --------------------
+
+cRoot OBJECT IDENTIFIER ::= { enterprises 4242 }
+
+cTimeout OBJECT-TYPE
+    SYNTAX      INTEGER -- in seconds -- (0..60)
+    MAX-ACCESS  read-write
+    STATUS      current
+    DESCRIPTION "A dash -- inside a string is not a comment, and neither is
+                 this rule: -- name -- value --"
+    ::= { cRoot 1 }
+
+---- cCommentedOut OBJECT-TYPE
+----     SYNTAX      INTEGER
+----     MAX-ACCESS  read-only
+----     STATUS      current
+----     DESCRIPTION "commented out with a run of hyphens"
+----     ::= { cRoot 2 }
+
+cNext OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "still here"
+    ::= { cRoot 3 }
+END`;
+
+  const objects = new Map(parseMibModule(COMMENT_MIB, 'comment.txt').objects.map(o => [o.name, o]));
+
+  // RFC 2578: a comment ends at the next "--" or at the end of the line
+  test('a comment in the middle of a line ends at the closing dashes', () => {
+    expect(objects.get('cTimeout')?.syntax).toBe('INTEGER (0..60)');
+  });
+
+  test('dashes inside a string are text, not comment markers', () => {
+    expect(objects.get('cTimeout')?.description).toContain('A dash -- inside a string');
+    expect(objects.get('cTimeout')?.description).toContain('-- name -- value --');
+  });
+
+  // Pairing the hyphens off two at a time would read the rest of these lines
+  // as code and resurrect the definition they comment out
+  test('a run of three or more hyphens comments out the rest of the line', () => {
+    expect(objects.has('cCommentedOut')).toBe(false);
+    expect(objects.has('cNext')).toBe(true);
+  });
+
+  test('a banner of hyphens leaves nothing behind', () => {
+    expect(objects.has('Objects')).toBe(false);
+    expect(objects.size).toBe(3);
+  });
+
+  test('an ordinary trailing comment still runs to the end of the line', () => {
+    const parsed = parseMibModule(
+      `TRAILING-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM SNMPv2-SMI;
+tRoot OBJECT IDENTIFIER ::= { enterprises 4243 } -- the anchor
+END`,
+      'trailing.txt'
+    );
+    expect(parsed.objects.map(o => o.name)).toEqual(['tRoot']);
+  });
+});
+
+describe('findNodeByOid', () => {
+  const tree = new MibTreeBuilder().buildTree([
+    parseMibModule(
+      `FIND-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE, enterprises FROM SNMPv2-SMI;
+findRoot OBJECT IDENTIFIER ::= { enterprises 4244 }
+findLeaf OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "a leaf"
+    ::= { findRoot 1 }
+findDeep OBJECT IDENTIFIER ::= { findRoot 7 11 13 }
+END`,
+      'find.txt'
+    ),
+  ]);
+
+  test('finds a node by its OID', () => {
+    expect(findNodeByOid(tree, '1.3.6.1.4.1.4244.1')?.name).toBe('findLeaf');
+    expect(findNodeByOid(tree, '1.3.6.1.4.1.4244')?.name).toBe('findRoot');
+    expect(findNodeByOid(tree, '1')?.name).toBe('iso');
+  });
+
+  test('walks past sub-identifiers that have no node of their own', () => {
+    // findDeep skips 1.3.6.1.4.1.4244.7 and .7.11 - neither exists as a node
+    expect(findNodeByOid(tree, '1.3.6.1.4.1.4244.7.11.13')?.name).toBe('findDeep');
+  });
+
+  test('returns null for an OID the tree does not hold', () => {
+    expect(findNodeByOid(tree, '1.3.6.1.4.1.4244.999')).toBeNull();
+    expect(findNodeByOid(tree, '')).toBeNull();
+  });
+
+  test('prefers the node with the name asked for when an OID repeats', () => {
+    const collidingA = parseMibModule(
+      `COLLIDE-A-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM SNMPv2-SMI;
+oldName OBJECT IDENTIFIER ::= { enterprises 4245 }
+END`,
+      'collide-a.txt'
+    );
+    const collidingB = parseMibModule(
+      `COLLIDE-B-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM SNMPv2-SMI;
+newName OBJECT IDENTIFIER ::= { enterprises 4245 }
+END`,
+      'collide-b.txt'
+    );
+
+    const colliding = new MibTreeBuilder().buildTree([collidingA, collidingB]);
+    expect(findNodeByOid(colliding, '1.3.6.1.4.1.4245', 'newName')?.name).toBe('newName');
+    expect(findNodeByOid(colliding, '1.3.6.1.4.1.4245', 'oldName')?.name).toBe('oldName');
+    // A name that is not there falls back rather than returning nothing
+    expect(findNodeByOid(colliding, '1.3.6.1.4.1.4245', 'goneName')?.oid).toBe('1.3.6.1.4.1.4245');
   });
 });

@@ -1,5 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { formatFileSize, sanitizeFileName } from '../src/lib/storage';
+import { getStorageInfo } from '../src/lib/indexeddb';
+import type { StoredMibData } from '../src/types/mib';
 
 describe('formatFileSize', () => {
   test.each([
@@ -43,5 +45,78 @@ describe('sanitizeFileName', () => {
 
   test('caps the length', () => {
     expect(sanitizeFileName('a'.repeat(400) + '.txt').length).toBeLessThanOrEqual(255);
+  });
+});
+
+describe('getStorageInfo', () => {
+  const originalNavigator = globalThis.navigator;
+
+  const withNavigator = async (value: unknown, run: () => Promise<void>) => {
+    Object.defineProperty(globalThis, 'navigator', { value, writable: true, configurable: true });
+    try {
+      await run();
+    } finally {
+      Object.defineProperty(globalThis, 'navigator', {
+        value: originalNavigator,
+        writable: true,
+        configurable: true,
+      });
+    }
+  };
+
+  const mib = (size: number): StoredMibData => ({
+    id: `${size}`,
+    fileName: `${size}.txt`,
+    content: '',
+    nodeCount: 0,
+    uploadedAt: 0,
+    lastAccessedAt: 0,
+    size,
+  });
+
+  // The gauge is labelled "IndexedDB", and IndexedDB holds the merged tree as
+  // well as the files - usually the largest record of the lot. Summing the file
+  // sizes reported a fraction of what the browser counts against the quota.
+  test('reports what the browser says is stored, not just the file sizes', async () => {
+    await withNavigator(
+      { storage: { estimate: async () => ({ usage: 9_000_000, quota: 100_000_000 }) } },
+      async () => {
+        const info = await getStorageInfo([mib(1000), mib(2000)]);
+        expect(info.used).toBe(9_000_000);
+        expect(info.available).toBe(91_000_000);
+        expect(info.percentage).toBeCloseTo(9, 5);
+      }
+    );
+  });
+
+  test('falls back to the stored file sizes when there is no estimate', async () => {
+    await withNavigator({}, async () => {
+      const info = await getStorageInfo([mib(1000), mib(2000)]);
+      expect(info.used).toBe(3000);
+    });
+  });
+
+  test('falls back when the estimate throws or reports nothing', async () => {
+    await withNavigator(
+      { storage: { estimate: async () => { throw new Error('denied'); } } },
+      async () => {
+        expect((await getStorageInfo([mib(1500)])).used).toBe(1500);
+      }
+    );
+
+    await withNavigator({ storage: { estimate: async () => ({ quota: 1000 }) } }, async () => {
+      expect((await getStorageInfo([mib(1500)])).used).toBe(1500);
+    });
+  });
+
+  test('never reports more than the quota as available or as a percentage', async () => {
+    await withNavigator(
+      { storage: { estimate: async () => ({ usage: 200, quota: 100 }) } },
+      async () => {
+        const info = await getStorageInfo([]);
+        expect(info.available).toBe(0);
+        expect(info.percentage).toBe(100);
+      }
+    );
   });
 });

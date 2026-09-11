@@ -702,6 +702,19 @@ path where the build failed completely, so error state is never lost.
 
 ### Conflict Detection
 
+Two kinds are reported, both as entries in a file's `conflicts` array so the
+notification panel can pair the files up:
+
+1. **Two files declaring the same module.** Their objects are compared field by
+   field - the case below.
+2. **Two different modules landing on the same OID.** A node is identified by
+   its OID, so a pair like this expands and highlights together in the tree;
+   until they were compared, nothing said why. The usual cause is a node renamed
+   between two revisions of a vendor MIB, with both revisions loaded. The
+   entry's difference is the `name` field, and both files are told about it.
+   Nodes with the same name *and* OID are not a collision: those are one
+   definition, merged in Pass 2.
+
 When files with the same `moduleName` exist, compare each object field:
 
 ```typescript

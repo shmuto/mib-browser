@@ -20,8 +20,13 @@ function extractMibNameFromCleaned(cleanedContent: string): string | null {
   // spelled out. They are spelled out rather than skipped with something like
   // `[^;]*?`, which would make this quadratic in the length of a file that
   // never matches - and the file comes from the user.
+  // The leading indent is matched with [ \t]* rather than \s*: with `m`, `^`
+  // already matches at every line start, so \s* bought nothing - but it could
+  // run across every blank line in the file from each of those starts, which is
+  // quadratic on a file that is all comments (they become blank lines here) and
+  // never matches. That file comes from the user.
   const definitionsMatch = cleanedContent.match(
-    /^\s*([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS(?:\s+(?:AUTOMATIC|IMPLICIT|EXPLICIT)\s+TAGS)?(?:\s+EXTENSIBILITY\s+IMPLIED)?\s*::=/m
+    /^[ \t]*([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS(?:\s+(?:AUTOMATIC|IMPLICIT|EXPLICIT)\s+TAGS)?(?:\s+EXTENSIBILITY\s+IMPLIED)?\s*::=/m
   );
   if (definitionsMatch) {
     return definitionsMatch[1];
@@ -141,10 +146,22 @@ function hasBalancedQuotes(content: string): boolean {
 /**
  * Remove comments
  *
- * A comment runs from `--` to the end of the line, but only outside a quoted
- * string: DESCRIPTION text regularly contains `--`, either as a dash in prose
- * or as a row of them drawing a table, and cutting the line there would take
- * the closing quote with it and swallow the rest of the definition.
+ * Per RFC 2578 a comment starts at `--` and ends at the next `--` or at the end
+ * of the line, whichever comes first - so `SYNTAX INTEGER -- seconds -- (0..60)`
+ * is a type with a comment in the middle of it, not a type with its constraint
+ * commented away.
+ *
+ * Two things that look like comment markers are not treated as a closing pair:
+ *
+ * - `--` inside a quoted string. DESCRIPTION text regularly contains one,
+ *   either as a dash in prose or as a row of them drawing a table, and cutting
+ *   the line there would take the closing quote with it and swallow the rest of
+ *   the definition.
+ * - A run of three or more hyphens, which opens a comment that runs to the end
+ *   of the line. Strict ASN.1 would pair the hyphens off two at a time and read
+ *   whatever follows as code - which turns `---- someObject OBJECT-TYPE`, the
+ *   ordinary way of commenting a block out, back into a definition, and leaves
+ *   the text of a `-------- Section --------` banner in the token stream.
  */
 function removeComments(content: string): string {
   if (!hasBalancedQuotes(content)) {
@@ -171,12 +188,26 @@ function removeComments(content: string): string {
     }
 
     if (code === 45 /* - */ && content.charCodeAt(i + 1) === 45) {
-      // Comment: skip to the end of the line, keeping the newline itself
-      let end = content.indexOf('\n', i);
-      if (end === -1) end = content.length;
+      let lineEnd = content.indexOf('\n', i);
+      if (lineEnd === -1) lineEnd = content.length;
+
+      // A run of three or more hyphens comments out the rest of the line
+      let hyphens = 2;
+      while (content.charCodeAt(i + hyphens) === 45) hyphens++;
+
+      let end = lineEnd;
+      if (hyphens === 2) {
+        // Closing pair, if there is one before the line ends
+        const closing = content.indexOf('--', i + 2);
+        if (closing !== -1 && closing < lineEnd) {
+          end = closing + 2;
+        }
+      }
+
       result += content.slice(copiedFrom, i);
       copiedFrom = end;
-      i = end;
+      // The newline is kept when the comment ran to the end of the line
+      i = end - 1;
     }
   }
 
@@ -559,6 +590,49 @@ export function filterTreeToNotifications(tree: MibNode[]): MibNode[] {
 }
 
 /**
+ * Find a node by its OID.
+ *
+ * Descends one level per sub-identifier rather than scanning the whole tree.
+ * An OID with no node of its own - an intermediate sub-identifier of a
+ * multi-subid assignment - is skipped without leaving the level, the same way
+ * the breadcrumb walks it.
+ *
+ * @param tree MIB tree
+ * @param oid OID to look for
+ * @param name Preferred name, when two modules landed on the same OID
+ * @returns The node, or null if the tree has nothing at that OID
+ */
+export function findNodeByOid(tree: MibNode[], oid: string, name?: string): MibNode | null {
+  const parts = oid.split('.').filter(Boolean);
+  if (parts.length === 0) return null;
+
+  let level = tree;
+
+  for (let i = 0; i < parts.length; i++) {
+    const prefix = parts.slice(0, i + 1).join('.');
+    const isTarget = i === parts.length - 1;
+
+    let chosen: MibNode | null = null;
+    for (const node of level) {
+      if (node.oid !== prefix) continue;
+      // Prefer the node the caller asked for; otherwise the first at this OID
+      if (isTarget && name !== undefined && node.name !== name) {
+        chosen = chosen ?? node;
+        continue;
+      }
+      chosen = node;
+      break;
+    }
+
+    if (!chosen) continue; // No node at this sub-identifier - stay at this level
+    if (isTarget) return chosen;
+    level = chosen.children;
+  }
+
+  return null;
+}
+
+/**
  * Count all nodes in a tree
  * @param tree MIB tree
  * @param matches Optional predicate; only the nodes it accepts are counted
@@ -752,7 +826,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 2: identifier MODULE-IDENTITY ... ::= { ... }
-  const pattern2 = /^\s*(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern2 = /^[ \t]*(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasModuleIdentity && (match = pattern2.exec(content)) !== null) {
     const name = match[1];
@@ -775,7 +849,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 3: identifier OBJECT-IDENTITY ... ::= { ... }
-  const pattern3 = /^\s*(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern3 = /^[ \t]*(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasObjectIdentity && (match = pattern3.exec(content)) !== null) {
     const name = match[1];
@@ -798,7 +872,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 4: identifier NOTIFICATION-TYPE ... ::= { ... }
-  const pattern4 = /^\s*(\w+)\s+NOTIFICATION-TYPE[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern4 = /^[ \t]*(\w+)\s+NOTIFICATION-TYPE[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasNotificationType && (match = pattern4.exec(content)) !== null) {
     const name = match[1];
@@ -830,7 +904,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 5: identifier MODULE-COMPLIANCE ... ::= { ... }
-  const pattern5 = /^\s*(\w+)\s+MODULE-COMPLIANCE[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern5 = /^[ \t]*(\w+)\s+MODULE-COMPLIANCE[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasModuleCompliance && (match = pattern5.exec(content)) !== null) {
     const name = match[1];
@@ -857,7 +931,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 6: identifier OBJECT-GROUP ... ::= { ... }
-  const pattern6 = /^\s*(\w+)\s+OBJECT-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern6 = /^[ \t]*(\w+)\s+OBJECT-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasObjectGroup && (match = pattern6.exec(content)) !== null) {
     const name = match[1];
@@ -884,7 +958,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 7: identifier NOTIFICATION-GROUP ... ::= { ... }
-  const pattern7 = /^\s*(\w+)\s+NOTIFICATION-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern7 = /^[ \t]*(\w+)\s+NOTIFICATION-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasNotificationGroup && (match = pattern7.exec(content)) !== null) {
     const name = match[1];

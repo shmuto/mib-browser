@@ -259,6 +259,60 @@ export async function runRebuild(
     }
   }
 
+  // Nodes sharing one OID under different names.
+  //
+  // Two files that declare the same module are compared field by field further
+  // down, but two *different* modules landing on the same OID were not compared
+  // at all: the tree simply carried both, and since a node is identified by its
+  // OID they expand and highlight together, with nothing to say why. A rename
+  // between two revisions of a vendor MIB is the usual cause.
+  // Only the OIDs that actually repeat are collected into a group; the rest of
+  // the tree costs one map entry each, the same as the index above.
+  const firstNodeByOid = new Map<string, MibNode>();
+  const sharedOids = new Map<string, MibNode[]>();
+  for (const node of flatTree) {
+    if (!node.fileName) continue;
+
+    const first = firstNodeByOid.get(node.oid);
+    if (!first) {
+      firstNodeByOid.set(node.oid, node);
+      continue;
+    }
+
+    const group = sharedOids.get(node.oid);
+    if (group) {
+      group.push(node);
+    } else {
+      sharedOids.set(node.oid, [first, node]);
+    }
+  }
+
+  // File name -> the collisions its nodes are part of
+  const oidCollisionsByFile = new Map<string, MibConflict[]>();
+  for (const [oid, sharing] of sharedOids) {
+    for (const node of sharing) {
+      for (const other of sharing) {
+        if (other === node || other.fileName === node.fileName) continue;
+        if (other.name === node.name) continue; // The same definition, not a collision
+
+        const conflict: MibConflict = {
+          oid,
+          name: node.name,
+          existingFile: other.fileName!,
+          newFile: node.fileName!,
+          differences: [{ field: 'name', existingValue: other.name, newValue: node.name }],
+        };
+
+        const existing = oidCollisionsByFile.get(node.fileName!);
+        if (existing) {
+          existing.push(conflict);
+        } else {
+          oidCollisionsByFile.set(node.fileName!, [conflict]);
+        }
+      }
+    }
+  }
+
   // Unplaced definitions, by the file they came from
   const unplacedByFile = new Map<string, typeof unresolved>();
   for (const orphan of unresolved) {
@@ -341,6 +395,7 @@ export async function runRebuild(
     }
 
     const unplaced = unplacedByFile.get(mib.fileName);
+    conflicts.push(...(oidCollisionsByFile.get(mib.fileName) ?? []));
 
     fileResults.set(mib.id, {
       id: mib.id,
