@@ -131,6 +131,21 @@ export function useMibStorage(options: UseMibStorageOptions = {}) {
       .filter((mib): mib is StoredMibData => mib !== undefined);
     await saveMibs(changed);
 
+    // Notify about files whose definitions could not all be placed. They are
+    // in the tree, just not whole, so this is separate from the exclusions below.
+    if (result.unplacedFiles?.length && onNotification) {
+      const unplacedSet = new Set(result.unplacedFiles);
+      const details = allMibs
+        .filter(mib => unplacedSet.has(mib.fileName))
+        .map(mib => `${mib.fileName}: ${mib.error || 'some definitions could not be placed'}`);
+
+      onNotification(
+        'warning',
+        `${result.unplacedFiles.length} file(s) have definitions that could not be placed`,
+        details
+      );
+    }
+
     // Notify if there are error files
     if (result.errorFiles.length > 0 && onNotification) {
       const errorSet = new Set(result.errorFiles);

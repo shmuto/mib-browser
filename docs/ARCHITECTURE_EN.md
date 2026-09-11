@@ -95,7 +95,7 @@ management library — component state plus one hook is enough at this size.
 | `TreeNode` | One row of the tree. Presentational and memoized. |
 | `TreeExpandControls` | Expand all / collapse all / compact view toggle. |
 | `SearchBar` | Query input and result count. |
-| `NodeDetails` | The selected node: OID, notation, source file, syntax, TEXTUAL-CONVENTION values (looked up in the index stored with the tree), description, children. |
+| `NodeDetails` | The selected node (re-resolved by OID after every rebuild, so it never shows a node from the previous tree): OID, notation, source file, syntax, enumerated values (the object's own inline `SYNTAX INTEGER { ... }` first, otherwise its TEXTUAL-CONVENTION, looked up in the index stored with the tree), the varbinds of a notification, description, children. |
 | `OidBreadcrumb` | The iso → org → dod → … path above the node details, each segment clickable. |
 | `ConflictNotificationPanel` | Banner listing files that define the same module differently, with a diff dialog. |
 | `NotificationPanel` | Persistent warnings and errors (missing dependencies, failed uploads). Exports the `useNotifications` hook. |
@@ -152,6 +152,10 @@ getAllMibs()
                                         │    → drop every module importing X,
                                         │      record the error, retry
                                         │      (up to 10 times)
+                                        ▼
+                                        ├─ definitions with an anchor no
+                                        │    file defines → recorded against
+                                        │    the file they came from
                                         ▼
                                      per-file bookkeeping
                                      node counts, conflicts, errors
@@ -270,9 +274,17 @@ another tab requests a version change.
 Storing the original text of every file is deliberate: a rebuild needs to
 re-parse everything, and the raw MIB is what the content viewer shows.
 
-Reported usage is the sum of the stored file sizes, compared against
-`navigator.storage.estimate()` — it is an approximation of what the origin is
-using, not an exact IndexedDB figure.
+Reported usage is `navigator.storage.estimate().usage` — an approximation of
+what the whole origin is using rather than an exact IndexedDB figure, but it is
+the number the quota is charged against, and it counts the merged tree. Summing
+the stored file sizes, which is what the readout used to show, left out the
+largest record in the database. The sum is still the fallback when the browser
+offers no estimate.
+
+Writes settle on the transaction, not on the request: a `put` succeeds well
+before the transaction commits, and a commit can still fail — a full quota is
+the usual way — so resolving on the request reported data as saved that never
+reached the disk.
 
 ### localStorage
 

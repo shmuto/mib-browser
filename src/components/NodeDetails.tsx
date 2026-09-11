@@ -3,7 +3,7 @@ import { Copy, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { MibNode, StoredMibData, TextualConvention } from '../types/mib';
 import OidBreadcrumb from './OidBreadcrumb';
-import { parseMibModule } from '../lib/mib-parser';
+import { parseMibModule, parseSyntaxValues } from '../lib/mib-parser';
 
 // TEXTUAL-CONVENTION index: type name -> definition.
 // Parsing every stored MIB is expensive, so the index is built once per MIB
@@ -60,13 +60,22 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
     return byName;
   }, [textualConventions]);
 
+  // Split the node's own SYNTAX into its base type and the values it allows.
+  // An OBJECT-TYPE usually spells its enumeration out inline rather than
+  // naming a TEXTUAL-CONVENTION.
+  const ownSyntax = useMemo(
+    () => (node?.syntax ? parseSyntaxValues(node.syntax) : null),
+    [node?.syntax]
+  );
+
   // Look up the TEXTUAL-CONVENTION matching this node's syntax
   // Must be called before any conditional returns (React hooks rule)
   const matchingTC = useMemo((): TextualConvention | null => {
     if (!node?.syntax) return null;
 
-    // Extract the type name from syntax (e.g., "DisplayString" from "DisplayString (SIZE (0..255))")
-    const syntaxTypeName = node.syntax.split(/\s*\(/)[0].trim();
+    // The base type is what a TEXTUAL-CONVENTION is named after: "DisplayString"
+    // out of "DisplayString (SIZE (0..255))"
+    const syntaxTypeName = ownSyntax?.syntax ?? node.syntax;
 
     if (storedTcIndex) {
       return storedTcIndex.get(syntaxTypeName) || null;
@@ -79,7 +88,7 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
     }
 
     return tcIndexRef.current.byName.get(syntaxTypeName) || null;
-  }, [node?.syntax, mibs, storedTcIndex]);
+  }, [node?.syntax, ownSyntax, mibs, storedTcIndex]);
 
   // Resolve a notification's varbinds to nodes, so each one can be clicked
   // through to. A module can carry objects it imports, so some of them may not
@@ -154,6 +163,12 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
     copyToClipboard(details, 'all');
   };
 
+  // An inline enumeration wins over the TEXTUAL-CONVENTION lookup: it is this
+  // object's own, and it is the one the SYNTAX row would otherwise repeat
+  const enumValues = ownSyntax?.enumValues ?? matchingTC?.enumValues;
+  const enumSource = ownSyntax?.enumValues ? null : matchingTC?.name;
+  const enumSyntax = ownSyntax?.syntax ?? node.syntax;
+
   const CopyButton = ({ fieldName, text }: { fieldName: string; text: string }) => {
     const isCopied = copiedField === fieldName;
     return (
@@ -219,17 +234,21 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
 
         <DetailRow label="Type" value={node.type} />
 
-        {node.syntax && <DetailRow label="Syntax" value={node.syntax} />}
+        {node.syntax && (
+          // With the values listed below, the row shows the type they belong to
+          <DetailRow label="Syntax" value={enumValues ? enumSyntax : node.syntax} />
+        )}
 
-        {/* TEXTUAL-CONVENTION enum values */}
-        {matchingTC?.enumValues && matchingTC.enumValues.length > 0 && (
+        {/* Enumerated values, either the node's own or its TEXTUAL-CONVENTION's */}
+        {enumValues && enumValues.length > 0 && (
           <div>
             <dt className="text-sm font-medium text-gray-600 mb-1">
-              Values <span className="text-xs text-gray-400">({matchingTC.name})</span>
+              Values
+              {enumSource && <span className="text-xs text-gray-400"> ({enumSource})</span>}
             </dt>
             <dd className="text-sm text-gray-800 bg-purple-50 p-3 rounded border border-purple-200">
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
-                {matchingTC.enumValues.map(ev => (
+                {enumValues.map(ev => (
                   <div key={ev.value} className="flex justify-between">
                     <span className="text-purple-700">{ev.name}</span>
                     <span className="text-gray-500">({ev.value})</span>

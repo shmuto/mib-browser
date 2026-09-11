@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useDeferredValue } from 'react';
 import type { MibNode, StoredMibData } from './types/mib';
 import { useMibStorage } from './hooks/useMibStorage';
-import { filterTreeByQuery, filterTreeToNotifications, isNotificationNode, countTreeNodes } from './lib/mib-parser';
+import { filterTreeByQuery, filterTreeToNotifications, isNotificationNode, countTreeNodes, findNodeByOid } from './lib/mib-parser';
 import { getOidPath } from './lib/oid-utils';
 import { sanitizeFileName, readSetting, writeSetting } from './lib/storage';
 import toast, { Toaster } from 'react-hot-toast';
@@ -239,6 +239,21 @@ export default function App() {
       return changed ? newSet : prev;
     });
   }, []);
+
+  // Re-resolve the selection against a tree that has just been rebuilt.
+  // `selectedNode` holds a node object, and every rebuild produces new ones, so
+  // without this the details panel keeps showing the state the node was in
+  // before the upload or delete - an outdated children list, a description from
+  // a file that has since been replaced - or a node that no longer exists at all.
+  useEffect(() => {
+    if (!selectedNode) return;
+
+    const refreshed = findNodeByOid(mergedTree, selectedNode.oid, selectedNode.name);
+    if (refreshed === selectedNode) return;
+
+    // null when the node is gone: its file was deleted, or it moved
+    setSelectedNode(refreshed);
+  }, [mergedTree, selectedNode]);
 
   // Auto-expand tree to show selected node.
   // Returns the previous Set unchanged when the path is already expanded -

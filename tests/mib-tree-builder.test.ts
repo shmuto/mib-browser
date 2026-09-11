@@ -299,3 +299,104 @@ END`;
     expect(nodes.get('dupLeafB')?.oid).toBe('1.3.6.1.4.1.99002.1.2');
   });
 });
+
+describe('anchors that cannot be resolved', () => {
+  // A module that says where its anchor comes from is taken at its word: a
+  // same-named node in some unrelated module is not that anchor.
+  const VENDOR_A = `VENDOR-A-MIB DEFINITIONS ::= BEGIN
+IMPORTS enterprises FROM SNMPv2-SMI;
+vendorA  OBJECT IDENTIFIER ::= { enterprises 1111 }
+products OBJECT IDENTIFIER ::= { vendorA 1 }
+END`;
+
+  const VENDOR_B = `VENDOR-B-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE FROM SNMPv2-SMI
+        products FROM VENDOR-B-SMI;
+bThing OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "belongs under VENDOR-B's products, which is not loaded"
+    ::= { products 7 }
+END`;
+
+  test('an imported anchor is not satisfied by another module of the same name', () => {
+    expect(() => build([parse(VENDOR_A, 'a.txt'), parse(VENDOR_B, 'b.txt')]))
+      .toThrow(/Missing MIB dependencies: VENDOR-B-SMI/);
+  });
+
+  test('an anchor the module never imported still resolves by name when unique', () => {
+    const guessing = `GUESS-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE FROM SNMPv2-SMI;
+guessLeaf OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "no IMPORTS says where products lives"
+    ::= { products 3 }
+END`;
+
+    const nodes = byName(build([parse(VENDOR_A, 'a.txt'), parse(guessing, 'g.txt')]));
+    expect(nodes.get('guessLeaf')?.oid).toBe('1.3.6.1.4.1.1111.1.3');
+  });
+
+  test('definitions that find no parent are reported instead of vanishing', () => {
+    const dangling = `DANGLING-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE FROM SNMPv2-SMI;
+danglingLeaf OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "nothing defines nowhereAnchor"
+    ::= { nowhereAnchor 1 }
+END`;
+
+    const builder = new MibTreeBuilder();
+    const tree = builder.buildTree([parse(dangling, 'dangling.txt')]);
+
+    expect(byName(tree).get('danglingLeaf')).toBeUndefined();
+    expect(builder.getUnresolvedOrphans()).toEqual([
+      {
+        name: 'danglingLeaf',
+        parentName: 'nowhereAnchor',
+        moduleName: 'DANGLING-MIB',
+        fileName: 'dangling.txt',
+      },
+    ]);
+  });
+
+  test('a tree that resolves completely reports no orphans', () => {
+    const builder = new MibTreeBuilder();
+    builder.buildTree([parse(BASE, 'base.txt'), parse(EXTENSION, 'ext.txt')]);
+    expect(builder.getUnresolvedOrphans()).toEqual([]);
+  });
+});
+
+describe('numeric OID assignments', () => {
+  const NUMERIC = `NUMERIC-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE FROM SNMPv2-SMI;
+numRoot OBJECT IDENTIFIER ::= { 1 3 6 1 4 1 12345 }
+numLeaf OBJECT-TYPE
+    SYNTAX      INTEGER
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "under a root written numerically"
+    ::= { numRoot 1 }
+END`;
+
+  test('a root arc written as a number anchors the module', () => {
+    const nodes = byName(build([parse(NUMERIC, 'numeric.txt')]));
+    expect(nodes.get('numRoot')?.oid).toBe('1.3.6.1.4.1.12345');
+    expect(nodes.get('numLeaf')?.oid).toBe('1.3.6.1.4.1.12345.1');
+  });
+
+  test('it agrees with the same assignment written from iso', () => {
+    const named = `NAMED-MIB DEFINITIONS ::= BEGIN
+IMPORTS OBJECT-TYPE FROM SNMPv2-SMI;
+namedRoot OBJECT IDENTIFIER ::= { iso 3 6 1 4 1 12345 }
+END`;
+
+    const nodes = byName(build([parse(NUMERIC, 'numeric.txt'), parse(named, 'named.txt')]));
+    expect(nodes.get('namedRoot')?.oid).toBe(nodes.get('numRoot')?.oid);
+  });
+});

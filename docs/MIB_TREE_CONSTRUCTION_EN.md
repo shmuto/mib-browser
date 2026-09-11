@@ -75,7 +75,7 @@ interface MibNode {
   name: string;           // Node name (e.g., "sysDescr")
   parent: string | null;  // Parent's OID, not a node reference
   type: string;           // OBJECT-TYPE type
-  syntax: string;         // SYNTAX
+  syntax: string;         // SYNTAX, whole: "INTEGER { up(1), down(2) }"
   access: string;         // ACCESS/MAX-ACCESS
   status: string;         // STATUS
   description: string;    // DESCRIPTION
@@ -83,6 +83,7 @@ interface MibNode {
   isExpanded?: boolean;
   mibName?: string;       // Module the node came from
   fileName?: string;      // Source file name
+  variables?: string[];   // VARIABLES / OBJECTS of a notification
 }
 ```
 
@@ -233,9 +234,9 @@ function resolveParent(node: TreeBuildNode, moduleName: string): TreeBuildNode |
 
   // 2. Search using IMPORTS information
   const imports = importsMap.get(moduleName);
-  if (imports && imports.has(parentName)) {
-    const sourceModule = imports.get(parentName)!;
-    const importedKey = `${sourceModule}::${parentName}`;
+  const declaredSource = imports?.get(parentName);
+  if (declaredSource) {
+    const importedKey = `${declaredSource}::${parentName}`;
     if (symbolMap.has(importedKey)) {
       return symbolMap.get(importedKey)!;
     }
@@ -247,7 +248,16 @@ function resolveParent(node: TreeBuildNode, moduleName: string): TreeBuildNode |
     return seed;
   }
 
-  // 4. Fallback: Cross-module search (only if name is unique)
+  // 3b. A root arc written as a number: `::= { 1 3 6 1 4 1 99999 }`
+  if (/^\d+$/.test(parentName)) {
+    const rootArc = seedNodes.find(seed => seed.oid === parentName);
+    if (rootArc) return rootArc;
+  }
+
+  // 4. Fallback: Cross-module search (only if name is unique), and only for
+  // an anchor the module did not say where to find
+  if (declaredSource) return null;
+
   const candidates = nameMap.get(parentName);
   if (candidates && candidates.length === 1) {
     return candidates[0];
@@ -256,6 +266,22 @@ function resolveParent(node: TreeBuildNode, moduleName: string): TreeBuildNode |
   return null;  // Parent not found → orphan node
 }
 ```
+
+Two details of that order matter:
+
+- **An `IMPORTS` clause is taken at its word.** When a module says its anchor
+  comes from `VENDOR-B-SMI`, a same-named node belonging to some other vendor's
+  module is not that anchor. Attaching to it would invent an OID — and present
+  it with the same confidence as a real one — while hiding the missing
+  dependency the module actually has. So step 4 is skipped for an anchor that
+  `IMPORTS` names, and the node becomes an orphan, which is what makes
+  `detectMissingMibs()` report the file it needs. The step 3 seed lookup comes
+  first on purpose: nearly every module imports `enterprises` and friends from
+  `SNMPv2-SMI` without loading it, and those resolve to seeds.
+- **A numeric parent is a root arc, not a name.** `foo OBJECT IDENTIFIER ::=
+  { 1 3 6 1 4 1 99999 }` is legal SMI: the first sub-identifier is the arc
+  `iso`, not an identifier to look up. Without step 3b the module - and every
+  definition hanging off it - resolved to nothing and left the tree silently.
 
 #### Duplicate Detection and Merging
 
@@ -430,6 +456,17 @@ node.subid = [30065, 3011, 7124, 3282];
 node.oid = "1.3.6.1.4.1.30065.3011.7124.3282";
 ```
 
+#### The SYNTAX clause
+
+`SYNTAX` runs to the next clause keyword, but the type itself may contain one:
+an enumeration is free to label a value `status(2)` or `index(3)`, and a
+constraint is written with parentheses and dots — `DisplayString (SIZE (0..255))`.
+`extractSyntaxClause()` therefore scans forward tracking brace, parenthesis and
+string depth, and only ends the clause at a keyword found at depth 0. The whole
+clause is kept on the node, and `parseSyntaxValues()` splits it into a base type
+plus enumerated values or a range when the details panel needs them — the same
+split the `TEXTUAL-CONVENTION` reader uses.
+
 #### SMIv1 TRAP-TYPE
 
 An SMIv1 trap (RFC 1215) carries no OID. It names the node it belongs to and a
@@ -509,6 +546,20 @@ function detectMissingMibs(): Set<string> {
   return missing;
 }
 ```
+
+### Unresolved Anchors
+
+An orphan whose parent is named in `IMPORTS` is a missing dependency, and
+`buildTree()` raises it. An orphan whose parent nothing defines at all is a
+different thing: the module refers to an anchor no loaded file provides, and
+there is no file to ask for. Those nodes cannot be placed in any tree.
+
+They used to be dropped without a word — the file simply showed a smaller node
+count than it has definitions. `MibTreeBuilder.getUnresolvedOrphans()` now
+returns them once the rescue passes are done, and the rebuild attributes them to
+the file they came from: the file carries an error naming the anchors that were
+not found, and `RebuildResult.unplacedFiles` lists it so the UI can raise a
+warning. The rest of the file's definitions are still in the tree.
 
 ### Error Notification
 
@@ -650,6 +701,19 @@ The records are mutated in place as the rebuild goes along, collected in a
 path where the build failed completely, so error state is never lost.
 
 ### Conflict Detection
+
+Two kinds are reported, both as entries in a file's `conflicts` array so the
+notification panel can pair the files up:
+
+1. **Two files declaring the same module.** Their objects are compared field by
+   field - the case below.
+2. **Two different modules landing on the same OID.** A node is identified by
+   its OID, so a pair like this expands and highlights together in the tree;
+   until they were compared, nothing said why. The usual cause is a node renamed
+   between two revisions of a vendor MIB, with both revisions loaded. The
+   entry's difference is the `name` field, and both files are told about it.
+   Nodes with the same name *and* OID are not a collision: those are one
+   definition, merged in Pass 2.
 
 When files with the same `moduleName` exist, compare each object field:
 
@@ -962,6 +1026,8 @@ function detectConflicts(mibs: Mib[], flatTree: MibNode[]): Map<string, Conflict
 | `filterTreeByQuery()` | `mib-parser.ts` | Filter the tree to search matches |
 | `filterTreeToNotifications()` | `mib-parser.ts` | Filter the tree to `NOTIFICATION-TYPE` / `TRAP-TYPE` nodes |
 | `extractTrapTypes()` | `mib-parser.ts` | Map SMIv1 `TRAP-TYPE` definitions onto `<enterprise>.0.<specific>` |
+| `extractSyntaxClause()` | `mib-parser.ts` | Read a whole `SYNTAX` clause, braces and constraints included |
+| `parseSyntaxValues()` | `mib-parser.ts` | Split a `SYNTAX` clause into base type, enumerated values and range |
 | `rebuildAllTrees()` | `useMibStorage.ts` | Full rebuild, with error handling |
 
 ---

@@ -190,6 +190,14 @@ searched the parent's existing children linearly — quadratic for `enterprises`
 with hundreds of vendor MIBs under it. A per-parent `name|subid` index makes it
 a map lookup.
 
+**A whitespace-only file made the line-anchored patterns quadratic.** With the
+`m` flag `^` already matches at every line start, so the `^\s*` those patterns
+began with bought nothing - but it could run across every blank line left in the
+file from each of those starts. Comments come out as blank lines, so a module
+that is all comments, or a wall of `-----` rules, cost half a second per
+megabyte before a single definition was read. They now use `^[ \t]*`, which
+cannot cross a newline. *536 ms → 4 ms for 20k comment lines.*
+
 **Absent constructs were still scanned for.** Each of the `MODULE-COMPLIANCE`,
 `OBJECT-GROUP`, `NOTIFICATION-GROUP`, … patterns scans the whole file with a
 lazy `[\s\S]*?`. A cheap keyword test now skips the ones a module does not use.

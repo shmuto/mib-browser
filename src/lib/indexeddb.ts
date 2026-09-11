@@ -96,16 +96,22 @@ export async function countMibs(): Promise<number> {
   return requestToPromise(transaction.objectStore(STORE_NAME).count());
 }
 
-// Save or update a MIB
+// Save or update a MIB.
+// Settles on the transaction, not on the request: a write only counts once the
+// transaction commits, and a commit can still fail (a full quota is the usual
+// way). Resolving on the request means reporting a successful upload for data
+// that never reached the disk.
 export async function saveMib(mib: StoredMibData): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
-    const request = store.put(mib);
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+
+    store.put(mib);
   });
 }
 
@@ -133,10 +139,12 @@ export async function deleteMib(id: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
-    const request = store.delete(id);
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+
+    store.delete(id);
   });
 }
 
@@ -164,33 +172,51 @@ export async function clearAllMibs(): Promise<void> {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
-    const request = store.clear();
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+
+    store.clear();
   });
 }
 
 // Get storage size estimate (IndexedDB quota)
-// Pass already-loaded MIBs to avoid re-reading every record from IndexedDB.
+//
+// What the browser reports is what counts against the quota, and that is more
+// than the files: the merged tree is stored too, and it is usually the largest
+// record of all. Summing the source file sizes - which is all this used to do -
+// reported a fraction of the real usage under a figure labelled "IndexedDB".
+//
+// Pass already-loaded MIBs for the fallback path; the browser estimate needs
+// no records read at all.
 export async function getStorageInfo(
   knownMibs?: StoredMibData[]
 ): Promise<{ used: number; available: number; percentage: number }> {
-  // Sum up actual stored MIB sizes (more accurate)
-  const mibs = knownMibs ?? (await getAllMibs());
-  const used = mibs.reduce((acc, mib) => acc + mib.size, 0);
-
-  // Get browser storage quota
   let quota = 50 * 1024 * 1024; // Default: 50MB
+  let used: number | null = null;
+
   if ('storage' in navigator && 'estimate' in navigator.storage) {
-    const estimate = await navigator.storage.estimate();
-    quota = estimate.quota || quota;
+    try {
+      const estimate = await navigator.storage.estimate();
+      quota = estimate.quota || quota;
+      if (typeof estimate.usage === 'number' && estimate.usage > 0) {
+        used = estimate.usage;
+      }
+    } catch {
+      // No estimate available - fall back to the stored file sizes below
+    }
+  }
+
+  if (used === null) {
+    const mibs = knownMibs ?? (await getAllMibs());
+    used = mibs.reduce((acc, mib) => acc + mib.size, 0);
   }
 
   return {
     used,
-    available: quota - used,
-    percentage: quota > 0 ? (used / quota) * 100 : 0,
+    available: Math.max(0, quota - used),
+    percentage: quota > 0 ? Math.min(100, (used / quota) * 100) : 0,
   };
 }
 
@@ -232,10 +258,14 @@ export async function saveMergedTree(
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(TREE_STORE_NAME, 'readwrite');
     const store = transaction.objectStore(TREE_STORE_NAME);
-    const request = store.put({ id: TREE_KEY, tree, textualConventions });
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    // The merged tree is the largest thing written here, so it is the write
+    // most likely to fail at commit time. Settle on the transaction.
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+
+    store.put({ id: TREE_KEY, tree, textualConventions });
   });
 }
 
@@ -269,9 +299,11 @@ export async function clearMergedTree(): Promise<void> {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(TREE_STORE_NAME, 'readwrite');
     const store = transaction.objectStore(TREE_STORE_NAME);
-    const request = store.delete(TREE_KEY);
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+
+    store.delete(TREE_KEY);
   });
 }

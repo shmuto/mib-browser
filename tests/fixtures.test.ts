@@ -15,6 +15,7 @@ import {
   flattenTree,
   filterTreeToNotifications,
   isNotificationNode,
+  parseSyntaxValues,
 } from '../src/lib/mib-parser';
 import { MibTreeBuilder } from '../src/lib/mib-tree-builder';
 import type { MibNode } from '../src/types/mib';
@@ -120,6 +121,20 @@ describe('the shapes each fixture stands for', () => {
 
     // No VARIABLES clause means no list at all, not an empty one
     expect(nodesByName.get('v1CardInserted')?.variables).toBeUndefined();
+  });
+
+  test('an inline enumeration is kept whole and splits into values', () => {
+    const reason = nodesByName.get('v1TrapReason');
+    expect(reason?.syntax).toBe('INTEGER { unknown(1), overheated(2), unplugged(3) }');
+    expect(parseSyntaxValues(reason!.syntax)).toEqual({
+      syntax: 'INTEGER',
+      enumValues: [
+        { name: 'unknown', value: 1 },
+        { name: 'overheated', value: 2 },
+        { name: 'unplugged', value: 3 },
+      ],
+      ranges: undefined,
+    });
   });
 
   test('the traps-only filter keeps SMIv1 traps and their branch', () => {

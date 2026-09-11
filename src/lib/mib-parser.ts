@@ -20,8 +20,13 @@ function extractMibNameFromCleaned(cleanedContent: string): string | null {
   // spelled out. They are spelled out rather than skipped with something like
   // `[^;]*?`, which would make this quadratic in the length of a file that
   // never matches - and the file comes from the user.
+  // The leading indent is matched with [ \t]* rather than \s*: with `m`, `^`
+  // already matches at every line start, so \s* bought nothing - but it could
+  // run across every blank line in the file from each of those starts, which is
+  // quadratic on a file that is all comments (they become blank lines here) and
+  // never matches. That file comes from the user.
   const definitionsMatch = cleanedContent.match(
-    /^\s*([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS(?:\s+(?:AUTOMATIC|IMPLICIT|EXPLICIT)\s+TAGS)?(?:\s+EXTENSIBILITY\s+IMPLIED)?\s*::=/m
+    /^[ \t]*([A-Z][A-Za-z0-9-]*)\s+DEFINITIONS(?:\s+(?:AUTOMATIC|IMPLICIT|EXPLICIT)\s+TAGS)?(?:\s+EXTENSIBILITY\s+IMPLIED)?\s*::=/m
   );
   if (definitionsMatch) {
     return definitionsMatch[1];
@@ -141,10 +146,22 @@ function hasBalancedQuotes(content: string): boolean {
 /**
  * Remove comments
  *
- * A comment runs from `--` to the end of the line, but only outside a quoted
- * string: DESCRIPTION text regularly contains `--`, either as a dash in prose
- * or as a row of them drawing a table, and cutting the line there would take
- * the closing quote with it and swallow the rest of the definition.
+ * Per RFC 2578 a comment starts at `--` and ends at the next `--` or at the end
+ * of the line, whichever comes first - so `SYNTAX INTEGER -- seconds -- (0..60)`
+ * is a type with a comment in the middle of it, not a type with its constraint
+ * commented away.
+ *
+ * Two things that look like comment markers are not treated as a closing pair:
+ *
+ * - `--` inside a quoted string. DESCRIPTION text regularly contains one,
+ *   either as a dash in prose or as a row of them drawing a table, and cutting
+ *   the line there would take the closing quote with it and swallow the rest of
+ *   the definition.
+ * - A run of three or more hyphens, which opens a comment that runs to the end
+ *   of the line. Strict ASN.1 would pair the hyphens off two at a time and read
+ *   whatever follows as code - which turns `---- someObject OBJECT-TYPE`, the
+ *   ordinary way of commenting a block out, back into a definition, and leaves
+ *   the text of a `-------- Section --------` banner in the token stream.
  */
 function removeComments(content: string): string {
   if (!hasBalancedQuotes(content)) {
@@ -171,12 +188,26 @@ function removeComments(content: string): string {
     }
 
     if (code === 45 /* - */ && content.charCodeAt(i + 1) === 45) {
-      // Comment: skip to the end of the line, keeping the newline itself
-      let end = content.indexOf('\n', i);
-      if (end === -1) end = content.length;
+      let lineEnd = content.indexOf('\n', i);
+      if (lineEnd === -1) lineEnd = content.length;
+
+      // A run of three or more hyphens comments out the rest of the line
+      let hyphens = 2;
+      while (content.charCodeAt(i + hyphens) === 45) hyphens++;
+
+      let end = lineEnd;
+      if (hyphens === 2) {
+        // Closing pair, if there is one before the line ends
+        const closing = content.indexOf('--', i + 2);
+        if (closing !== -1 && closing < lineEnd) {
+          end = closing + 2;
+        }
+      }
+
       result += content.slice(copiedFrom, i);
       copiedFrom = end;
-      i = end;
+      // The newline is kept when the comment ran to the end of the line
+      i = end - 1;
     }
   }
 
@@ -321,6 +352,105 @@ function extractObjectTypes(content: string): string[] {
 }
 
 /**
+ * The clauses that can follow SYNTAX in an OBJECT-TYPE or a TEXTUAL-CONVENTION.
+ * Sticky, so it is tested at one position rather than searched for.
+ */
+const SYNTAX_TERMINATOR = /(?:UNITS|MAX-ACCESS|ACCESS|STATUS|DESCRIPTION|REFERENCE|DISPLAY-HINT|INDEX|AUGMENTS|DEFVAL|::=)\b/iy;
+
+/**
+ * Extract the SYNTAX clause of a definition.
+ *
+ * The clause ends at the next clause keyword, but only one that is not inside
+ * the type itself: an enumeration is free to label a value `status(2)` or
+ * `description(4)`, and a size constraint is written with parentheses and dots.
+ * So the scan tracks brace, parenthesis and string depth, and only treats a
+ * keyword at depth 0 as the end.
+ *
+ * @param content An OBJECT-TYPE block or a TEXTUAL-CONVENTION body
+ * @returns The clause with its whitespace collapsed, or '' when there is none
+ */
+function extractSyntaxClause(content: string): string {
+  const keyword = content.match(/\bSYNTAX\b/i);
+  if (!keyword || keyword.index === undefined) return '';
+
+  const start = keyword.index + keyword[0].length;
+  let depth = 0;
+  let inString = false;
+  let end = content.length;
+
+  for (let i = start; i < content.length; i++) {
+    const code = content.charCodeAt(i);
+
+    if (inString) {
+      if (code === 34 /* " */) inString = false;
+      continue;
+    }
+
+    if (code === 34 /* " */) {
+      inString = true;
+    } else if (code === 123 /* { */ || code === 40 /* ( */) {
+      depth++;
+    } else if (code === 125 /* } */ || code === 41 /* ) */) {
+      if (depth > 0) depth--;
+    } else if (depth === 0 && i > start) {
+      // A clause keyword only ends the SYNTAX if it starts a word
+      const previous = content.charCodeAt(i - 1);
+      const isWordStart = previous === 32 || previous === 9 || previous === 10 || previous === 13;
+      if (!isWordStart) continue;
+
+      SYNTAX_TERMINATOR.lastIndex = i;
+      if (SYNTAX_TERMINATOR.test(content)) {
+        end = i;
+        break;
+      }
+    }
+  }
+
+  return content.slice(start, end).trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Split a SYNTAX clause into its base type and the values it constrains
+ *
+ * `INTEGER { up(1), down(2) }` gives the type `INTEGER` and two enumerated
+ * values; `Integer32 (0..65535)` gives the type `Integer32` and a range.
+ * @param syntaxRaw A SYNTAX clause as written in the MIB
+ */
+export function parseSyntaxValues(syntaxRaw: string): {
+  syntax: string;
+  enumValues?: Array<{ name: string; value: number }>;
+  ranges?: Array<{ min: number; max: number }>;
+} {
+  let syntax = syntaxRaw.trim();
+  let enumValues: Array<{ name: string; value: number }> | undefined;
+  let ranges: Array<{ min: number; max: number }> | undefined;
+
+  // Enumerated values: INTEGER { name(value), ... }, and BITS the same way
+  const enumMatch = syntax.match(/(\w+(?:\s+\w+)*)\s*\{([^}]+)\}/);
+  if (enumMatch) {
+    const values: Array<{ name: string; value: number }> = [];
+    const enumPattern = /([\w\-]+)\s*\(\s*(-?\d+)\s*\)/g;
+    let enumItem;
+    while ((enumItem = enumPattern.exec(enumMatch[2])) !== null) {
+      values.push({ name: enumItem[1], value: parseInt(enumItem[2], 10) });
+    }
+    if (values.length > 0) {
+      syntax = enumMatch[1].trim();
+      enumValues = values;
+    }
+  }
+
+  // Size or range constraint: (SIZE (min..max)) or (min..max)
+  const rangeMatch = syntax.match(/\(\s*(?:SIZE\s*\()?\s*(\d+)\s*\.\.\s*(\d+)\s*\)?\s*\)/i);
+  if (rangeMatch) {
+    ranges = [{ min: parseInt(rangeMatch[1], 10), max: parseInt(rangeMatch[2], 10) }];
+    syntax = syntax.replace(/\s*\(.*\)\s*$/, '').trim();
+  }
+
+  return { syntax, enumValues, ranges };
+}
+
+/**
  * Extract TEXTUAL-CONVENTION definitions from MIB content
  */
 function extractTextualConventions(content: string): import('../types/mib').TextualConvention[] {
@@ -350,35 +480,10 @@ function extractTextualConventions(content: string): import('../types/mib').Text
     const description = descMatch ? descMatch[1].trim().replace(/\s+/g, ' ') : undefined;
 
     // Extract SYNTAX with possible enum values or ranges
-    const syntaxMatch = body.match(/SYNTAX\s+([\s\S]*?)(?=STATUS|DESCRIPTION|DISPLAY-HINT|$)/i);
-    if (!syntaxMatch) continue;
+    const syntaxRaw = extractSyntaxClause(body);
+    if (!syntaxRaw) continue;
 
-    let syntaxRaw = syntaxMatch[1].trim();
-    let syntax = syntaxRaw;
-    let enumValues: Array<{ name: string; value: number }> | undefined;
-    let ranges: Array<{ min: number; max: number }> | undefined;
-
-    // Check for enum values: INTEGER { name(value), ... }
-    const enumMatch = syntaxRaw.match(/(\w+(?:\s+\w+)*)\s*\{([^}]+)\}/);
-    if (enumMatch) {
-      syntax = enumMatch[1].trim();
-      const enumBody = enumMatch[2];
-      enumValues = [];
-      const enumPattern = /(\w+)\s*\(\s*(-?\d+)\s*\)/g;
-      let enumItem;
-      while ((enumItem = enumPattern.exec(enumBody)) !== null) {
-        enumValues.push({ name: enumItem[1], value: parseInt(enumItem[2], 10) });
-      }
-      if (enumValues.length === 0) enumValues = undefined;
-    }
-
-    // Check for size/range constraints: (SIZE (min..max)) or (min..max)
-    const rangeMatch = syntaxRaw.match(/\(\s*(?:SIZE\s*\()?\s*(\d+)\s*\.\.\s*(\d+)\s*\)?\s*\)/i);
-    if (rangeMatch) {
-      ranges = [{ min: parseInt(rangeMatch[1], 10), max: parseInt(rangeMatch[2], 10) }];
-      // Clean up syntax
-      syntax = syntax.replace(/\s*\(.*\)\s*$/, '').trim();
-    }
+    const { syntax, enumValues, ranges } = parseSyntaxValues(syntaxRaw);
 
     conventions.push({
       name,
@@ -482,6 +587,49 @@ export function isNotificationNode(node: MibNode): boolean {
  */
 export function filterTreeToNotifications(tree: MibNode[]): MibNode[] {
   return filterTreeBy(tree, isNotificationNode);
+}
+
+/**
+ * Find a node by its OID.
+ *
+ * Descends one level per sub-identifier rather than scanning the whole tree.
+ * An OID with no node of its own - an intermediate sub-identifier of a
+ * multi-subid assignment - is skipped without leaving the level, the same way
+ * the breadcrumb walks it.
+ *
+ * @param tree MIB tree
+ * @param oid OID to look for
+ * @param name Preferred name, when two modules landed on the same OID
+ * @returns The node, or null if the tree has nothing at that OID
+ */
+export function findNodeByOid(tree: MibNode[], oid: string, name?: string): MibNode | null {
+  const parts = oid.split('.').filter(Boolean);
+  if (parts.length === 0) return null;
+
+  let level = tree;
+
+  for (let i = 0; i < parts.length; i++) {
+    const prefix = parts.slice(0, i + 1).join('.');
+    const isTarget = i === parts.length - 1;
+
+    let chosen: MibNode | null = null;
+    for (const node of level) {
+      if (node.oid !== prefix) continue;
+      // Prefer the node the caller asked for; otherwise the first at this OID
+      if (isTarget && name !== undefined && node.name !== name) {
+        chosen = chosen ?? node;
+        continue;
+      }
+      chosen = node;
+      break;
+    }
+
+    if (!chosen) continue; // No node at this sub-identifier - stay at this level
+    if (isTarget) return chosen;
+    level = chosen.children;
+  }
+
+  return null;
 }
 
 /**
@@ -678,7 +826,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 2: identifier MODULE-IDENTITY ... ::= { ... }
-  const pattern2 = /^\s*(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern2 = /^[ \t]*(\w+)\s+MODULE-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasModuleIdentity && (match = pattern2.exec(content)) !== null) {
     const name = match[1];
@@ -701,7 +849,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 3: identifier OBJECT-IDENTITY ... ::= { ... }
-  const pattern3 = /^\s*(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern3 = /^[ \t]*(\w+)\s+OBJECT-IDENTITY[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasObjectIdentity && (match = pattern3.exec(content)) !== null) {
     const name = match[1];
@@ -724,7 +872,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 4: identifier NOTIFICATION-TYPE ... ::= { ... }
-  const pattern4 = /^\s*(\w+)\s+NOTIFICATION-TYPE[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern4 = /^[ \t]*(\w+)\s+NOTIFICATION-TYPE[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasNotificationType && (match = pattern4.exec(content)) !== null) {
     const name = match[1];
@@ -756,7 +904,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 5: identifier MODULE-COMPLIANCE ... ::= { ... }
-  const pattern5 = /^\s*(\w+)\s+MODULE-COMPLIANCE[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern5 = /^[ \t]*(\w+)\s+MODULE-COMPLIANCE[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasModuleCompliance && (match = pattern5.exec(content)) !== null) {
     const name = match[1];
@@ -783,7 +931,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 6: identifier OBJECT-GROUP ... ::= { ... }
-  const pattern6 = /^\s*(\w+)\s+OBJECT-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern6 = /^[ \t]*(\w+)\s+OBJECT-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasObjectGroup && (match = pattern6.exec(content)) !== null) {
     const name = match[1];
@@ -810,7 +958,7 @@ function extractOidAssignmentsRaw(
   }
 
   // Pattern 7: identifier NOTIFICATION-GROUP ... ::= { ... }
-  const pattern7 = /^\s*(\w+)\s+NOTIFICATION-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
+  const pattern7 = /^[ \t]*(\w+)\s+NOTIFICATION-GROUP[\s\S]*?::=\s*(\{[^}]+\})/gim;
 
   while (hasNotificationGroup && (match = pattern7.exec(content)) !== null) {
     const name = match[1];
@@ -975,9 +1123,9 @@ function parseObjectTypeRaw(content: string): import('../types/mib').RawMibObjec
   if (!nameMatch) return null;
   const name = nameMatch[1];
 
-  // Extract SYNTAX
-  const syntaxMatch = content.match(/SYNTAX\s+([\w\-\s(){}]+?)(?=\s+(?:UNITS|MAX-ACCESS|ACCESS|STATUS|DESCRIPTION))/i);
-  const syntax = syntaxMatch ? syntaxMatch[1].trim() : '';
+  // Extract SYNTAX. Kept whole - an enumeration or a size constraint is part
+  // of the type, and the details panel reads the values back out of it.
+  const syntax = extractSyntaxClause(content);
 
   // Extract ACCESS or MAX-ACCESS
   const accessMatch = content.match(/(?:ACCESS|MAX-ACCESS)\s+([\w\-]+)/i);
