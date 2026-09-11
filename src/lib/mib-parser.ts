@@ -588,9 +588,11 @@ function extractTextualConventions(
   // ...but a clause of the convention itself is not the next definition:
   // `SYNTAX OBJECT IDENTIFIER` is the line five of SNMPv2-TC's conventions end
   // on, and reading it as one cut the body before its own SYNTAX and dropped
-  // the convention entirely.
+  // the convention entirely. The clause names are only excluded when they are
+  // used as clauses: OSPF-MIB has a convention actually called `Status`, and
+  // the match is case-insensitive, so excluding the word outright swallowed it.
   const pattern =
-    /([A-Za-z][\w-]*)\s*::=\s*TEXTUAL-CONVENTION([\s\S]*?)(?=\n[ \t]*(?!SYNTAX\b|STATUS\b|DESCRIPTION\b|DISPLAY-HINT\b|REFERENCE\b|UNITS\b)[A-Za-z][\w-]*[ \t\r\n]*(?:::=|OBJECT[ \t]+IDENTIFIER|OBJECT-TYPE|OBJECT-IDENTITY|MODULE-IDENTITY|NOTIFICATION-TYPE|OBJECT-GROUP|NOTIFICATION-GROUP|MODULE-COMPLIANCE|TRAP-TYPE|AGENT-CAPABILITIES|MACRO)|$)/gi;
+    /([A-Za-z][\w-]*)\s*::=\s*TEXTUAL-CONVENTION([\s\S]*?)(?=\n[ \t]*(?!(?:SYNTAX|STATUS|DESCRIPTION|DISPLAY-HINT|REFERENCE|UNITS)\b(?![ \t]*::=))[A-Za-z][\w-]*[ \t\r\n]*(?:::=|OBJECT[ \t]+IDENTIFIER|OBJECT-TYPE|OBJECT-IDENTITY|MODULE-IDENTITY|NOTIFICATION-TYPE|OBJECT-GROUP|NOTIFICATION-GROUP|MODULE-COMPLIANCE|TRAP-TYPE|AGENT-CAPABILITIES|MACRO)|$)/gi;
 
   let match;
   while ((match = pattern.exec(masked)) !== null) {

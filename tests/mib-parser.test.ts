@@ -1089,6 +1089,32 @@ END`,
     ]);
   });
 
+  // OSPF-MIB has a convention called Status, and the scan is case-insensitive
+  test('a convention named after a clause keyword is still a convention', () => {
+    const parsed = parseMibModule(
+      `KEYWORD-NAME-MIB DEFINITIONS ::= BEGIN
+IMPORTS TEXTUAL-CONVENTION FROM SNMPv2-TC;
+Metric ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION  "The metric."
+    SYNTAX       Integer32 (0..65535)
+
+Status ::= TEXTUAL-CONVENTION
+    STATUS       current
+    DESCRIPTION  "The status of an entry."
+    SYNTAX       INTEGER { enabled(1), disabled(2) }
+END`,
+      'keyword-name.txt'
+    );
+
+    const tcs = parsed.textualConventions!;
+    expect(tcs.map(tc => tc.name)).toEqual(['Metric', 'Status']);
+    expect(tcs[1].enumValues).toEqual([
+      { name: 'enabled', value: 1 },
+      { name: 'disabled', value: 2 },
+    ]);
+  });
+
   // The last convention of a module has nothing after it but END, and the
   // assignments of whatever follows if the body is not bounded
   test('the last convention in a module does not run past its own clause', () => {
