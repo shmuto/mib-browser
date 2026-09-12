@@ -63,6 +63,10 @@ export interface UploadResult {
   success: boolean;
   conflicts?: MibConflict[];
   error?: string;
+  // Set when the file holds no MIB module at all. A folder import reports
+  // these as skipped rather than as failures: a folder of MIBs also holds
+  // readmes, changelogs and archives, and none of them are upload errors.
+  reason?: 'not-a-mib';
 }
 
 // === 3-pass approach type definitions ===

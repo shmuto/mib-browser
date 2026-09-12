@@ -12,6 +12,10 @@ browser's storage.
 
 ## Features
 
+- **Folder import** — drop a whole MIB directory, or pick one with **Select
+  folder**, and every file inside it is read, subdirectories included; files
+  that hold no MIB module are counted as skipped rather than reported as
+  failures
 - **Merged tree** — many MIB modules resolved into a single OID hierarchy,
   regardless of the order you load them in
 - **Cross-module resolution** — `IMPORTS` clauses are followed, so a module can

@@ -71,6 +71,7 @@ management library — component state plus one hook is enough at this size.
 | `rebuild-client.ts` | Main-thread side of the worker: request/response plumbing, tracking which file contents the worker already has, and the no-worker fallback. |
 | `oid-utils.ts` | `getOidPath` - every prefix from the root to an OID. |
 | `indexeddb.ts` | All IndexedDB access. Nothing else touches the database. |
+| `dropped-files.ts` | The files behind a drop or a folder pick: turns dropped items into File System entries and walks directory entries (batch by batch, subdirectories included) down to their files, skipping dotfiles and dot-directories. |
 | `storage.ts` | Small helpers: `generateId`, `sanitizeFileName`, `formatFileSize`, and the guarded `readSetting` / `writeSetting` used for UI preferences. |
 
 ### `src/workers`
@@ -89,7 +90,7 @@ management library — component state plus one hook is enough at this size.
 
 | Component | Responsibility |
 |---|---|
-| `FileUploader` | Drop zone and file dialog, multi-file upload with a progress bar, "paste from text" entry point. |
+| `FileUploader` | Drop zone, file dialog and folder picker, multi-file upload with a progress bar, "paste from text" entry point. A dropped folder is walked to its files by `dropped-files.ts`. |
 | `SavedMibsList` | The stored-file list: filter, sort, selection, bulk delete/download. |
 | `MibTreeView` | The merged tree. Flattens the visible branches and renders a windowed slice of them. |
 | `TreeNode` | One row of the tree. Presentational and memoized. |
@@ -307,7 +308,7 @@ Three different things can go wrong with a MIB, and each has its own surface:
 
 | Situation | Detected in | Shown by |
 |---|---|---|
-| Not a MIB file at all (no `DEFINITIONS ::= BEGIN`, no `END`, no object definitions) | `validateMibContent` during upload | Toast, plus an entry in the notification panel |
+| Not a MIB file at all (no `DEFINITIONS ::= BEGIN`, no `END`, no object definitions) | `validateMibContent` during upload | Toast, plus an entry in the notification panel. In a folder import such a file is counted as skipped instead: a folder of MIBs also holds readmes and archives, and those are not upload errors. |
 | Imports a module that has not been loaded | `MibTreeBuilder` throws; `rebuildAllTrees` marks the dependants | Warning in the notification panel, error badge on the file row. The file stays stored with `nodeCount: 0` and starts contributing as soon as the missing MIB is added. |
 | Two files define the same module differently | `rebuildAllTrees`, comparing objects of same-named modules field by field | Conflict banner with a per-object diff and a delete action |
 

@@ -1,7 +1,13 @@
 import { useCallback, useRef, useState } from 'react';
-import { Upload, FileText, Loader2, ClipboardPaste } from 'lucide-react';
+import { Upload, FileText, Loader2, ClipboardPaste, FolderOpen } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { UploadResult } from '../types/mib';
+import {
+  collectFilesFromEntries,
+  entriesFromDataTransfer,
+  filterPickedFolderFiles,
+  hasDirectoryEntry,
+} from '../lib/dropped-files';
 import TextInputModal from './TextInputModal';
 
 interface FileUploaderProps {
@@ -13,19 +19,28 @@ interface FileUploaderProps {
 
 interface UploadProgress {
   isUploading: boolean;
+  isScanning: boolean;
   currentFile: string;
   processedFiles: number;
   totalFiles: number;
 }
 
+const IDLE_PROGRESS: UploadProgress = {
+  isUploading: false,
+  isScanning: false,
+  currentFile: '',
+  processedFiles: 0,
+  totalFiles: 0,
+};
+
+// `webkitdirectory` is what turns a file input into a folder picker, and React
+// has no typing for it
+const FOLDER_INPUT_PROPS = { webkitdirectory: '', directory: '' } as unknown as React.InputHTMLAttributes<HTMLInputElement>;
+
 export default function FileUploader({ onUpload, onUploadFromText, onReload, onNotification }: FileUploaderProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
-    isUploading: false,
-    currentFile: '',
-    processedFiles: 0,
-    totalFiles: 0,
-  });
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress>(IDLE_PROGRESS);
   const [isTextModalOpen, setIsTextModalOpen] = useState(false);
 
   const handleTextSubmit = useCallback(async (content: string, fileName: string) => {
@@ -52,6 +67,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
     // Update progress
     setUploadProgress({
       isUploading: true,
+      isScanning: false,
       currentFile: file.name,
       processedFiles: fileIndex,
       totalFiles: totalFiles,
@@ -76,35 +92,41 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
     return results;
   }, [processUpload]);
 
-  const showUploadSummary = useCallback((results: Array<{ file: File; result: UploadResult }>) => {
+  const showUploadSummary = useCallback((
+    results: Array<{ file: File; result: UploadResult }>,
+    { fromFolder = false }: { fromFolder?: boolean } = {}
+  ) => {
     if (results.length === 0) return;
 
     let successCount = 0;
     let conflictCount = 0;
-    let failureCount = 0;
+    let skippedCount = 0;
+    const failures: Array<{ file: File; result: UploadResult }> = [];
 
-    results.forEach(({ result }) => {
+    results.forEach(({ file, result }) => {
       if (result.success) {
         if (result.conflicts && result.conflicts.length > 0) {
           conflictCount++;
         } else {
           successCount++;
         }
+      } else if (fromFolder && result.reason === 'not-a-mib') {
+        // A folder of MIBs also holds readmes, licenses and archives. Those
+        // are not upload failures, so they are counted and left at that.
+        skippedCount++;
       } else {
-        failureCount++;
+        failures.push({ file, result });
       }
     });
 
     // Add failed files to notification panel
-    if (failureCount > 0 && onNotification) {
-      const failedDetails = results
-        .filter(({ result }) => !result.success)
-        .map(({ file, result }) => `${file.name}: ${result.error || 'Unknown error'}`);
+    if (failures.length > 0 && onNotification) {
+      const failedDetails = failures.map(({ file, result }) => `${file.name}: ${result.error || 'Unknown error'}`);
 
-      onNotification('error', `${failureCount} file(s) failed to upload`, failedDetails);
+      onNotification('error', `${failures.length} file(s) failed to upload`, failedDetails);
     }
 
-    if (results.length === 1) {
+    if (results.length === 1 && !fromFolder) {
       // Show individual message for single file
       const { file, result } = results[0];
       if (result.success) {
@@ -122,68 +144,69 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
       } else {
         toast.error(`✗ Failed to upload ${file.name}: ${result.error || 'Unknown error'}`);
       }
+      return;
+    }
+
+    // Show summary for multiple files
+    const parts: string[] = [];
+    if (successCount > 0) parts.push(`${successCount} uploaded`);
+    if (conflictCount > 0) parts.push(`${conflictCount} with conflicts`);
+    if (failures.length > 0) parts.push(`${failures.length} failed`);
+    if (skippedCount > 0) parts.push(`${skippedCount} skipped (not MIB files)`);
+
+    if (fromFolder && successCount === 0 && conflictCount === 0 && failures.length === 0) {
+      toast(`No MIB files found in the folder (${skippedCount} file(s) skipped)`, { icon: 'ℹ️' });
+      return;
+    }
+
+    const message = `✓ ${parts.join(', ')}`;
+
+    if (failures.length > 0) {
+      // Collect failed file names
+      const failedFiles = failures.map(({ file, result }) => `${file.name}: ${result.error || 'Unknown error'}`);
+
+      toast.error(
+        <div>
+          <div>{message}</div>
+          <div className="mt-1 text-xs opacity-80">
+            {failedFiles.map((f, i) => (
+              <div key={i}>• {f}</div>
+            ))}
+          </div>
+        </div>,
+        { duration: 6000 }
+      );
+    } else if (conflictCount > 0) {
+      toast(message, {
+        icon: '⚠️',
+        style: {
+          background: '#fef3c7',
+          color: '#92400e',
+        },
+      });
     } else {
-      // Show summary for multiple files
-      const parts: string[] = [];
-      if (successCount > 0) parts.push(`${successCount} uploaded`);
-      if (conflictCount > 0) parts.push(`${conflictCount} with conflicts`);
-      if (failureCount > 0) parts.push(`${failureCount} failed`);
-
-      const message = `✓ ${parts.join(', ')}`;
-
-      if (failureCount > 0) {
-        // Collect failed file names
-        const failedFiles = results
-          .filter(({ result }) => !result.success)
-          .map(({ file, result }) => `${file.name}: ${result.error || 'Unknown error'}`);
-
-        toast.error(
-          <div>
-            <div>{message}</div>
-            <div className="mt-1 text-xs opacity-80">
-              {failedFiles.map((f, i) => (
-                <div key={i}>• {f}</div>
-              ))}
-            </div>
-          </div>,
-          { duration: 6000 }
-        );
-      } else if (conflictCount > 0) {
-        toast(message, {
-          icon: '⚠️',
-          style: {
-            background: '#fef3c7',
-            color: '#92400e',
-          },
-        });
-      } else {
-        toast.success(message);
-      }
+      toast.success(message);
     }
   }, [onNotification]);
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    const fileArray = Array.from(files);
-    const totalFiles = fileArray.length;
-
-    // Reset input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+  // Store every file of a selection or a drop, then report what happened
+  const uploadFiles = useCallback(async (files: File[], { fromFolder = false }: { fromFolder?: boolean } = {}) => {
+    if (files.length === 0) {
+      if (fromFolder) toast('The folder holds no files to import', { icon: 'ℹ️' });
+      return;
     }
 
     try {
       // Start upload
       setUploadProgress({
         isUploading: true,
+        isScanning: false,
         currentFile: '',
         processedFiles: 0,
-        totalFiles: totalFiles,
+        totalFiles: files.length,
       });
 
-      const allResults = await processFiles(fileArray);
+      const allResults = await processFiles(files);
 
       // A successful batch ends in a rebuild, which publishes the new tree and
       // MIB list on its own. A failure can end the batch before that happens,
@@ -193,17 +216,40 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
       }
 
       // Show summary
-      showUploadSummary(allResults);
+      showUploadSummary(allResults, { fromFolder });
     } finally {
       // Reset upload progress
-      setUploadProgress({
-        isUploading: false,
-        currentFile: '',
-        processedFiles: 0,
-        totalFiles: 0,
-      });
+      setUploadProgress(IDLE_PROGRESS);
     }
   }, [processFiles, onReload, showUploadSummary]);
+
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const fileArray = Array.from(files);
+
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+
+    await uploadFiles(fileArray);
+  }, [uploadFiles]);
+
+  const handleFolderSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const fileArray = filterPickedFolderFiles(Array.from(files));
+
+    // Reset input
+    if (folderInputRef.current) {
+      folderInputRef.current.value = '';
+    }
+
+    await uploadFiles(fileArray, { fromFolder: true });
+  }, [uploadFiles]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -214,46 +260,43 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
     e.preventDefault();
     e.stopPropagation();
 
-    const files = e.dataTransfer.files;
-    if (!files || files.length === 0) return;
+    // The dropped items are only readable during this handler, so the entries
+    // behind them are taken before anything is awaited
+    const entries = entriesFromDataTransfer(e.dataTransfer);
+    const droppedFiles = Array.from(e.dataTransfer.files);
 
-    const fileArray = Array.from(files);
-    const totalFiles = fileArray.length;
-
-    try {
-      // Start upload
-      setUploadProgress({
-        isUploading: true,
-        currentFile: '',
-        processedFiles: 0,
-        totalFiles: totalFiles,
-      });
-
-      const allResults = await processFiles(fileArray);
-
-      // A successful batch ends in a rebuild, which publishes the new tree and
-      // MIB list on its own. A failure can end the batch before that happens,
-      // leaving earlier files stored but not shown, so reload in that case.
-      if (onReload && allResults.some(({ result }) => !result.success)) {
-        await onReload();
-      }
-
-      // Show summary
-      showUploadSummary(allResults);
-    } finally {
-      // Reset upload progress
-      setUploadProgress({
-        isUploading: false,
-        currentFile: '',
-        processedFiles: 0,
-        totalFiles: 0,
-      });
+    if (!entries) {
+      // No entry API: only the files of the drop are reachable
+      await uploadFiles(droppedFiles);
+      return;
     }
-  }, [processFiles, onReload, showUploadSummary]);
+
+    if (!hasDirectoryEntry(entries)) {
+      // A drop of plain files needs no walking, and a file dropped by name is
+      // taken as it is - a dotfile included
+      await uploadFiles(droppedFiles);
+      return;
+    }
+
+    // Walking a folder takes a moment on a large collection; say so
+    setUploadProgress({ ...IDLE_PROGRESS, isScanning: true });
+    let files: File[];
+    try {
+      files = await collectFilesFromEntries(entries);
+    } catch (error) {
+      setUploadProgress(IDLE_PROGRESS);
+      toast.error(`Failed to read the dropped folder: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return;
+    }
+
+    await uploadFiles(files, { fromFolder: true });
+  }, [uploadFiles]);
 
   const handleButtonClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
+
+  const isBusy = uploadProgress.isUploading || uploadProgress.isScanning;
 
   const progressPercentage = uploadProgress.totalFiles > 0
     ? Math.round((uploadProgress.processedFiles / uploadProgress.totalFiles) * 100)
@@ -262,13 +305,13 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
   return (
     <div
       className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-        uploadProgress.isUploading
+        isBusy
           ? 'border-blue-500 bg-blue-50 cursor-not-allowed'
           : 'border-gray-300 hover:border-blue-500 cursor-pointer'
       }`}
-      onDragOver={uploadProgress.isUploading ? undefined : handleDragOver}
-      onDrop={uploadProgress.isUploading ? undefined : handleDrop}
-      onClick={uploadProgress.isUploading ? undefined : handleButtonClick}
+      onDragOver={isBusy ? undefined : handleDragOver}
+      onDrop={isBusy ? undefined : handleDrop}
+      onClick={isBusy ? undefined : handleButtonClick}
     >
       {/* No accept filter: MIB files come with every extension and none at all,
           and the content is validated on upload anyway */}
@@ -278,10 +321,30 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         multiple
         className="hidden"
         onChange={handleFileSelect}
-        disabled={uploadProgress.isUploading}
+        disabled={isBusy}
       />
 
-      {uploadProgress.isUploading ? (
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleFolderSelect}
+        disabled={isBusy}
+        {...FOLDER_INPUT_PROPS}
+      />
+
+      {uploadProgress.isScanning ? (
+        <>
+          <Loader2 className="mx-auto mb-4 text-blue-500 animate-spin" size={48} />
+          <p className="text-lg font-medium text-gray-700 mb-2">
+            Reading folder...
+          </p>
+          <p className="text-sm text-gray-600">
+            Collecting the files to import
+          </p>
+        </>
+      ) : uploadProgress.isUploading ? (
         <>
           <Loader2 className="mx-auto mb-4 text-blue-500 animate-spin" size={48} />
           <p className="text-lg font-medium text-gray-700 mb-2">
@@ -310,7 +373,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         <>
           <Upload className="mx-auto mb-4 text-gray-400" size={48} />
           <p className="text-lg font-medium text-gray-700 mb-2">
-            Drag & drop MIB files
+            Drag & drop MIB files or folders
           </p>
           <p className="text-sm text-gray-500 mb-4">
             or click to select files
@@ -322,18 +385,33 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         </>
       )}
 
-      {/* Paste text button */}
-      {onUploadFromText && !uploadProgress.isUploading && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setIsTextModalOpen(true);
-          }}
-          className="mt-3 flex items-center justify-center gap-2 px-4 py-2 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors mx-auto"
-        >
-          <ClipboardPaste size={16} />
-          <span>Paste from text</span>
-        </button>
+      {/* Folder and text entry points */}
+      {!isBusy && (
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              folderInputRef.current?.click();
+            }}
+            className="flex items-center justify-center gap-2 px-4 py-2 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+          >
+            <FolderOpen size={16} />
+            <span>Select folder</span>
+          </button>
+
+          {onUploadFromText && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsTextModalOpen(true);
+              }}
+              className="flex items-center justify-center gap-2 px-4 py-2 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+            >
+              <ClipboardPaste size={16} />
+              <span>Paste from text</span>
+            </button>
+          )}
+        </div>
       )}
 
       {/* Text input modal */}
