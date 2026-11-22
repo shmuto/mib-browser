@@ -1,601 +1,92 @@
 # Incremental MIB Tree Update Proposal
 
-**Status: proposal, not implemented.** The application still performs a full
-rebuild on every change. See [PERFORMANCE_EN.md](./PERFORMANCE_EN.md) for what
-that currently costs and [MIB_TREE_CONSTRUCTION_EN.md](./MIB_TREE_CONSTRUCTION_EN.md)
-for how the rebuild works today.
+> [!IMPORTANT]
+> **Status: Partially implemented; full incremental updates deferred.**
+> The high-value, low-risk parts of this proposal—an **in-memory session parse cache**, **publishing React state before persisting**, and **running rebuilds in a Web Worker**—have been implemented. Full differential tree updates remain deferred after profiling showed they would not address the remaining bottlenecks.
+>
+> See [PERFORMANCE_EN.md](./PERFORMANCE_EN.md) for current numbers and [MIB_TREE_CONSTRUCTION_EN.md](./MIB_TREE_CONSTRUCTION_EN.md) for how rebuilds work today.
 
-## Current Problem
+## Table of Contents
 
-The current implementation **rebuilds the entire tree** when adding or deleting even a single MIB file:
-
-```typescript
-// useMibStorage.ts uploadMib()
-await uploadMib(file) {
-  // 1. Save MIB to IndexedDB
-  await saveMib(newMib);
-
-  // 2. Load all MIBs and rebuild entire tree
-  await rebuildAllTrees();  // ← Re-parse and rebuild ALL MIBs
-}
-```
-
-### Performance Issues
-
-The rebuild has since been optimized (see
-[PERFORMANCE_EN.md](./PERFORMANCE_EN.md)), so the constant factor is roughly a
-third of what it was — but the shape of the problem is unchanged: the cost is
-proportional to the **whole collection**, not to what changed.
-
-Measured on a synthetic corpus, Chromium, end to end from dropping the files in
-to the tree being rendered:
-
-| MIB count | Total size | Rebuild |
-|---|---|---|
-| 12 files | ~0.4 MB | ~180 ms |
-| 60 files | ~2 MB | ~625 ms |
-
-At library level (parse + build only, no storage), 400 modules / 14 MB / 63k
-nodes takes roughly 700 ms — ~480 ms parsing, ~220 ms building. Parsing
-dominates, and it is exactly the work an incremental update would skip: a file
-that has not changed does not need re-parsing.
-
-Note also that this runs on the main thread, so however long it takes is time
-the UI is frozen.
+1. [Summary of Current State](#summary-of-current-state)
+2. [Reassessment After Measurement](#reassessment-after-measurement)
+3. [What Was Implemented Instead](#what-was-implemented-instead)
+4. [Why Full Incremental Updates Are Deferred](#why-full-incremental-updates-are-deferred)
+5. [Summary of Evaluated Approaches](#summary-of-evaluated-approaches)
 
 ---
 
-## Reassessment
+## Summary of Current State
 
-Written after measuring the rebuild and implementing the cheap parts of this
-proposal. The diagnosis below still holds — a rebuild costs what the whole
-collection costs — but three of the assumptions do not.
+Adding or deleting even a single MIB file still rebuilds the entire OID tree and writes it back to IndexedDB as a single record. While the rebuild runs off the main thread and skips re-parsing unchanged files, total work still scales with the **entire collection** rather than the changed file.
 
-### Parsing is not the majority of a rebuild
+---
 
-The effect estimates in this document count parse time only. Measured at
-80 files / 5.4 MB / 16k nodes:
+## Reassessment After Measurement
+
+Profiling an **80-file / 5.4 MB / 16k-node** collection showed that four assumptions in the original incremental-update proposal did not hold:
+
+### 1. Parsing Is Not the Majority of a Rebuild
 
 | Stage | Time |
 |---|---|
-| Read every stored MIB | ~38 ms |
+| Read all stored MIBs | ~38 ms |
 | Parse all files | ~185 ms |
 | Build the tree | ~55 ms |
 | **Write the merged tree** | **~176 ms** |
-| Read the tree back | ~34 ms |
+| Read the tree back *(removed)* | ~34 ms |
 
-Parsing is about 30% of an upload, not the bulk. Any estimate that ignores the
-write and the reads is optimistic by roughly a factor of three.
+Parsing accounted for ~30% of the total cost, not the bulk. Speedup estimates based on parse time alone were optimistic by roughly 3×.
 
-### The write is a floor under every phase
+### 2. Writing the Merged Tree Is a Floor Under Every Approach
 
-The merged tree is stored as a single record, so persisting it costs ~176 ms at
-16k nodes and scales with the tree. Incremental parsing and incremental building
-do not touch that number. The "90-95% speedup" of the full incremental approach
-is not reachable while the tree is rewritten whole — reaching it would mean
-splitting the tree across records or not persisting on every change, neither of
-which this document considers.
+Because `mergedTree` is persisted as a single IndexedDB record (~176 ms at 16k nodes, scaling with tree size), incremental parsing and incremental tree building cannot eliminate it. Reaching a 90–95% speedup would require splitting the tree across multiple records or deferring persistence.
 
-### Approach 1 cannot run against the stored tree
+### 3. Differential Updates Cannot Run Against the Stored Tree
 
-The pseudocode reads `child.parentName`, `c.subid` and `findOrphanNodes(existingTree)`.
-None of those exist in the persisted data:
+Persisted `MibNode` records do not retain builder metadata (`parentName`, `subid`) or orphan nodes:
 
-```
-keys on a stored MibNode: access, children, description, fileName,
-                          isExpanded, mibName, name, oid, parent, status, syntax, type
-has subid?       false
-has parentName?  false
-orphan node present in tree?  false
+```text
+Stored MibNode keys: access, children, description, fileName, isExpanded,
+                     mibName, name, oid, parent, status, syntax, type
+Has subid?           false
+Has parentName?      false
+Includes orphans?    false
 ```
 
-`convertToMibNode()` drops everything the builder used to resolve parents, and
-orphans are never linked into the tree at all. Differential updates would need
-the tree persisted in builder shape (`TreeBuildNode`) or the builder kept alive
-in memory. Persisting the larger shape makes the write — already the biggest
-single cost — bigger.
+`convertToMibNode()` strips resolution fields, and orphans are never linked into the tree. Differential updates would require persisting the larger `TreeBuildNode` structure (making the IndexedDB write even slower) or keeping the builder state alive in memory.
 
-### The cache should not be persisted
+### 4. The Parse Cache Should Not Be Persisted
 
-Phase 1 specifies persisting the parse cache to IndexedDB. A page reload does
-not rebuild: it renders the stored tree. So the cache is only ever read within
-the session that filled it, and persisting it adds a serialization round trip
-for no benefit. A plain in-memory `Map` is simpler and strictly faster.
-
-### What was done instead
-
-The two cheap items, which needed no change to the data model:
-
-- **Session-scoped parse cache**, keyed by MIB id, reused when the content is
-  unchanged. Uploading also seeds it with the parse done to read the module
-  name, so a file is parsed once rather than twice.
-- **Publish React state before persisting**, and stop reading back what was just
-  written.
-
-Measured at 80 files / 16k nodes: adding one file to an existing collection
-644 → 195 ms, Rebuild Tree 540 → 185 ms, bulk upload of 79 files 1207 → 784 ms,
-deleting one file 680 → 413 ms.
-
-- **The rebuild runs in a Web Worker.** This document lists workers under
-  "parallelize tree building", but the value is not parallelism — it is that a
-  rebuild stops blocking the UI. Parsing, building and the tree write all happen
-  off the main thread. Main-thread blocking during a rebuild: 249 → 89 ms for a
-  bulk upload, 309 → 105 ms for adding a file, 145 → 0 ms for Rebuild Tree.
-
-  Two details decide whether this is worth anything at all, because the naive
-  version is a net loss: the worker has to keep the parse cache (posting 5.4 MB
-  of MIB text costs ~95 ms of main-thread serialization, about what parsing it
-  costs), and it has to do the tree write (receiving the tree costs the main
-  thread ~76 ms, more than the ~55 ms build it took away).
-
-### What is worth doing next
-
-**Re-measure before building anything else.** With parsing cached, the UI
-unblocked and the rebuild off the main thread, what is left on the main thread
-is ~90–105 ms, most of it deserializing the tree the worker sends back —
-which incremental updates would not remove. The remaining cost may not justify
-the correctness risk of incremental tree updates, where the failure modes — a
-wrong OID, a node that quietly stops appearing — are invisible until they
-matter.
+Persisting parsed modules to IndexedDB adds serialization overhead for zero benefit: a page reload renders the stored `mergedTree` directly without rebuilding, so the parse cache is only ever read within the active session. An in-memory `Map` is simpler and strictly faster.
 
 ---
 
-## Incremental Update Implementation Strategy
+## What Was Implemented Instead
 
-### Approach 1: Differential Updates (Recommended)
+Three changes delivered most of the responsiveness gains without changing the persisted data model:
 
-#### Basic Idea
-
-1. **Preserve existing tree** and process only changed MIBs
-2. **Identify affected scope** for minimal recalculation
-3. **Incremental merge** into existing tree
-
-#### Implementation Steps
-
-##### 1. Processing When Adding MIB
-
-```typescript
-async function addMibIncremental(newMibFile: File): Promise<void> {
-  // Step 1: Parse new MIB
-  const newModule = parseMibModule(content, fileName);
-
-  // Step 2: Load existing tree
-  const existingTree = await loadMergedTree();
-
-  // Step 3: Impact analysis
-  const affectedNodes = analyzeImpact(newModule, existingTree);
-
-  // Step 4: Build new nodes
-  const newNodes = buildNodesFromModule(newModule);
-
-  // Step 5: Merge into existing tree
-  const updatedTree = mergeIntoTree(existingTree, newNodes, affectedNodes);
-
-  // Step 6: Recompute OIDs only for affected scope
-  recomputeOidsForAffectedNodes(updatedTree, affectedNodes);
-
-  // Step 7: Save
-  await saveMergedTree(updatedTree);
-}
-```
-
-##### 2. Impact Analysis Implementation
-
-```typescript
-interface AffectedNodes {
-  orphansResolved: string[];      // Nodes that were orphans but parent found in new MIB
-  newParents: string[];           // Existing nodes where new MIB nodes become parents
-  duplicates: string[];           // Nodes with duplicate definitions
-  newRoots: string[];             // Completely new subtrees
-}
-
-function analyzeImpact(newModule: ParsedModule, existingTree: MibNode[]): AffectedNodes {
-  const affected: AffectedNodes = {
-    orphansResolved: [],
-    newParents: [],
-    duplicates: [],
-    newRoots: []
-  };
-
-  // Flatten existing tree and build maps
-  const existingByName = buildNodeNameMap(existingTree);
-  const existingByOid = buildNodeOidMap(existingTree);
-
-  // Analyze each object in new module
-  for (const obj of newModule.objects) {
-    // 1. Does it resolve existing orphan nodes?
-    const orphans = findOrphanNodes(existingTree);
-    for (const orphan of orphans) {
-      if (orphan.parentName === obj.name) {
-        affected.orphansResolved.push(orphan.oid);
-      }
-    }
-
-    // 2. Will it become parent of existing nodes?
-    const potentialChildren = existingByName.get(obj.name);
-    if (potentialChildren) {
-      for (const child of potentialChildren) {
-        if (child.parentName === obj.name) {
-          affected.newParents.push(child.oid);
-        }
-      }
-    }
-
-    // 3. Is it a duplicate definition?
-    if (existingByName.has(obj.name)) {
-      const existing = existingByName.get(obj.name)!;
-      if (existing.length > 0 && existing[0].moduleName !== newModule.moduleName) {
-        affected.duplicates.push(obj.name);
-      }
-    }
-
-    // 4. Is it completely new?
-    const parentExists = existingByName.has(obj.parentName!) ||
-                        isSeedNode(obj.parentName!);
-    if (parentExists && !existingByName.has(obj.name)) {
-      affected.newRoots.push(obj.name);
-    }
-  }
-
-  return affected;
-}
-```
-
-##### 3. Incremental Merge Implementation
-
-```typescript
-function mergeIntoTree(
-  existingTree: MibNode[],
-  newNodes: TreeBuildNode[],
-  affected: AffectedNodes
-): MibNode[] {
-  // Clone existing tree (maintain immutability)
-  const tree = cloneTree(existingTree);
-  const treeMap = buildNodeOidMap(tree);
-
-  // Add new nodes
-  for (const newNode of newNodes) {
-    const parentOid = findParentOid(newNode, treeMap);
-
-    if (parentOid && treeMap.has(parentOid)) {
-      const parent = treeMap.get(parentOid)!;
-
-      // Check for duplicates
-      const existingChild = parent.children.find(c =>
-        c.name === newNode.name &&
-        subidsEqual(c.subid, newNode.subid)
-      );
-
-      if (existingChild) {
-        // Duplicate - merge
-        mergeNodes(existingChild, newNode);
-      } else {
-        // New - add
-        parent.children.push(convertToMibNode(newNode));
-        parent.children.sort(compareBySubid);
-      }
-    }
-  }
-
-  // Re-link orphan nodes
-  for (const orphanOid of affected.orphansResolved) {
-    const orphan = treeMap.get(orphanOid);
-    if (orphan) {
-      relinkOrphan(orphan, tree, treeMap);
-    }
-  }
-
-  return tree;
-}
-```
-
-##### 4. Partial OID Recalculation
-
-```typescript
-function recomputeOidsForAffectedNodes(
-  tree: MibNode[],
-  affected: AffectedNodes
-): void {
-  const visited = new Set<string>();
-
-  // Recalculate only affected nodes and their descendants
-  const affectedOids = new Set([
-    ...affected.orphansResolved,
-    ...affected.newParents,
-    ...affected.newRoots
-  ]);
-
-  for (const oid of affectedOids) {
-    const node = findNodeByOid(tree, oid);
-    if (node && !visited.has(oid)) {
-      recomputeOidRecursive(node, visited);
-    }
-  }
-}
-
-function recomputeOidRecursive(node: MibNode, visited: Set<string>): void {
-  if (visited.has(node.oid)) return;
-  visited.add(node.oid);
-
-  for (const child of node.children) {
-    // Recalculate child OID from parent OID
-    if (typeof child.subid === 'number') {
-      child.oid = `${node.oid}.${child.subid}`;
-    } else if (Array.isArray(child.subid)) {
-      child.oid = `${node.oid}.${child.subid.join('.')}`;
-    }
-    child.parent = node.oid;
-
-    // Recursively process children
-    recomputeOidRecursive(child, visited);
-  }
-}
-```
-
-##### 5. Processing When Removing MIB
-
-```typescript
-async function removeMibIncremental(fileName: string): Promise<void> {
-  // Step 1: Load existing tree
-  const existingTree = await loadMergedTree();
-
-  // Step 2: Identify nodes to remove
-  const nodesToRemove = findNodesByFileName(existingTree, fileName);
-
-  // Step 3: Identify orphaned children
-  const orphanedChildren = findChildrenOfNodes(existingTree, nodesToRemove);
-
-  // Step 4: Remove nodes
-  const updatedTree = removeNodesFromTree(existingTree, nodesToRemove);
-
-  // Step 5: Re-link orphans to other parents (if possible)
-  for (const orphan of orphanedChildren) {
-    const alternativeParent = findAlternativeParent(orphan, updatedTree);
-    if (alternativeParent) {
-      relinkOrphan(orphan, updatedTree, alternativeParent);
-    } else {
-      // Parent not found - remain orphan (or delete)
-      markAsOrphan(orphan);
-    }
-  }
-
-  // Step 6: Save
-  await saveMergedTree(updatedTree);
-}
-```
+1. **In-memory session parse cache (`src/lib/rebuild.ts`):** Keyed by MIB id and reused whenever file content is unchanged. Upload seeds the cache with the initial module-name parse so new files are parsed once.
+2. **Publish React state before persisting:** UI state updates from the in-memory rebuild result immediately, eliminating the redundant IndexedDB read-back.
+   - *At 80 files / 16k nodes:* add 1 file `644 → 195 ms`, Rebuild Tree `540 → 185 ms`, bulk upload of 79 files `1207 → 784 ms`, delete 1 file `680 → 413 ms`.
+3. **Web Worker rebuild (`src/workers/rebuild.worker.ts`):** Parsing, tree building, and writing `mergedTree` all run off the main thread for **responsiveness** (not parallelism):
+   - *Main-thread blocking:* bulk upload `249 → 89 ms`, add 1 file `309 → 105 ms`, Rebuild Tree `145 → 0 ms`.
+   - Two details make this a net win: the worker holds the parse cache (avoiding ~95 ms of main-thread serialization to send 5.4 MB of MIB text) and writes `mergedTree` (offsetting the ~76 ms main-thread deserialization cost of receiving the tree).
 
 ---
 
-### Approach 2: Cache Optimization (Simpler)
+## Why Full Incremental Updates Are Deferred
 
-Since full incremental updates are complex, starting with **cache optimization** might be more practical.
+**Re-measure before building anything else.** With parsing cached and rebuilds running in a Web Worker, main-thread blocking is down to ~90–105 ms—mostly deserializing the tree returned by the worker, which incremental tree building would not remove.
 
-#### Implementation
-
-```typescript
-class MibTreeCache {
-  // ParsedModule cache
-  private parsedModuleCache: Map<string, {
-    module: ParsedModule,
-    hash: string,      // File content hash
-    timestamp: number
-  }>;
-
-  constructor() {
-    this.parsedModuleCache = new Map();
-  }
-
-  /**
-   * Parse MIB (with cache)
-   */
-  async parseMibWithCache(fileName: string, content: string): Promise<ParsedModule> {
-    const hash = await computeHash(content);
-    const cached = this.parsedModuleCache.get(fileName);
-
-    // Cache hit
-    if (cached && cached.hash === hash) {
-      console.log(`Cache hit for ${fileName}`);
-      return cached.module;
-    }
-
-    // Cache miss - execute parse
-    console.log(`Parsing ${fileName}...`);
-    const module = parseMibModule(content, fileName);
-
-    this.parsedModuleCache.set(fileName, {
-      module,
-      hash,
-      timestamp: Date.now()
-    });
-
-    return module;
-  }
-
-  /**
-   * Clear cache
-   */
-  clearCache(fileName?: string): void {
-    if (fileName) {
-      this.parsedModuleCache.delete(fileName);
-    } else {
-      this.parsedModuleCache.clear();
-    }
-  }
-}
-```
-
-#### Usage Example
-
-```typescript
-const cache = new MibTreeCache();
-
-async function rebuildAllTreesWithCache(): Promise<void> {
-  const allMibs = await getAllMibs();
-
-  // Parse using cache (re-parse only changed MIBs)
-  const modules = await Promise.all(
-    allMibs.map(mib => cache.parseMibWithCache(mib.fileName, mib.content))
-  );
-
-  // Build tree (full rebuild)
-  const builder = new MibTreeBuilder();
-  const tree = builder.buildTree(modules);
-
-  await saveMergedTree(tree);
-}
-```
-
-#### Improvement Effect
-
-| MIB Count | No Changes | Add 1 | Add 10 |
-|-----------|------------|-------|--------|
-| Parse time (current) | 500ms | 550ms | 1000ms |
-| Parse time (cached) | ~0ms | 50ms | 500ms |
-| **Improvement** | **100%** | **90%** | **50%** |
-
-Tree building time unchanged, but parsing significantly faster.
+Given the high correctness risk of differential tree updates (where subtle bugs like a wrong OID or silently missing node are hard to detect), further work should only be reconsidered if real-world collections outgrow the current worker architecture.
 
 ---
 
-## Implementation Difficulty and Effect
+## Summary of Evaluated Approaches
 
-| Approach | Difficulty | Implementation Time | Effect | Risk |
-|----------|-----------|---------------------|--------|------|
-| **Cache Optimization** | ⭐️ Low | 2-3 hours | 30-70% speedup | Low |
-| **Partial Update (Add only)** | ⭐️⭐️⭐️ Medium | 1-2 days | 70-90% speedup | Medium |
-| **Partial Update (Complete)** | ⭐️⭐️⭐️⭐️⭐️ High | 1 week | 90-95% speedup | High |
-
----
-
-## Recommended Implementation Plan
-
-### Phase 1: Cache Optimization (Short-term)
-
-1. ✅ **Implement ParsedModule cache**
-   - Detect changes with file content hash
-   - Persist cache to IndexedDB
-   - Expect significant speedup
-
-2. ✅ **Parallelize tree building**
-   - Parallel parsing with Web Workers
-   - Further speedup
-
-### Phase 2: Partial Updates (Mid-term)
-
-3. ✅ **Incremental update on MIB addition**
-   - Implement impact analysis logic
-   - Implement incremental merge
-   - Partial OID recalculation
-
-4. ⚠️ **Incremental update on MIB removal**
-   - More complex (orphan handling needed)
-   - Defer if Phase 1 is sufficient
-
-### Phase 3: Optimization (Long-term)
-
-5. ✅ **Optimize tree structure**
-   - Improve index structure
-   - Enhance search performance
-
----
-
-## Implementation Example: Phase 1 (Cache Optimization)
-
-### File Structure
-
-```
-src/lib/
-  mib-cache.ts         # New: Cache manager
-  mib-tree-builder.ts  # Modified: Cache support
-src/hooks/
-  useMibStorage.ts     # Modified: Use cache
-```
-
-### Code Example
-
-```typescript
-// src/lib/mib-cache.ts
-export class MibParseCache {
-  private static readonly CACHE_STORE = 'mib-parse-cache';
-
-  async get(fileName: string, contentHash: string): Promise<ParsedModule | null> {
-    const cached = await db.get(this.CACHE_STORE, fileName);
-    if (cached && cached.hash === contentHash) {
-      return cached.module;
-    }
-    return null;
-  }
-
-  async set(fileName: string, contentHash: string, module: ParsedModule): Promise<void> {
-    await db.put(this.CACHE_STORE, {
-      fileName,
-      hash: contentHash,
-      module,
-      timestamp: Date.now()
-    });
-  }
-
-  async clear(fileName?: string): Promise<void> {
-    if (fileName) {
-      await db.delete(this.CACHE_STORE, fileName);
-    } else {
-      await db.clear(this.CACHE_STORE);
-    }
-  }
-}
-
-// src/hooks/useMibStorage.ts
-const cache = new MibParseCache();
-
-const rebuildAllTrees = useCallback(async (): Promise<void> => {
-  const allMibs = await getAllMibs();
-
-  // Parse using cache
-  const allModules = await Promise.all(
-    allMibs.map(async mib => {
-      const hash = await computeHash(mib.content);
-
-      // Check cache
-      let module = await cache.get(mib.fileName, hash);
-
-      if (!module) {
-        // Cache miss - execute parse
-        module = parseMibModule(mib.content, mib.fileName);
-        await cache.set(mib.fileName, hash, module);
-      }
-
-      return module;
-    })
-  );
-
-  // Build tree (existing logic)
-  const builder = new MibTreeBuilder();
-  const tree = builder.buildTree(allModules);
-
-  await saveMergedTree(tree);
-}, []);
-```
-
----
-
-## Summary
-
-### Current State
-- ❌ Full tree rebuild for adding one MIB
-- ❌ Cost scales with the whole collection, not with the change
-- ❌ Runs on the main thread, so the UI is blocked for the duration
-- ✅ The rebuild itself has been optimized as far as it usefully can be without
-  changing this design
-
-### Proposal
-1. **Short-term**: Cache optimization for 30-70% speedup (simple implementation)
-2. **Mid-term**: Partial updates for 70-90% speedup (somewhat complex)
-3. **Long-term**: Full incremental updates for 90-95% speedup (complex)
-
-### Recommendation
-
-Superseded by the [Reassessment](#reassessment) above. Phase 1 is implemented —
-the cache in memory rather than persisted, and the worker for responsiveness
-rather than parallelism. Phase 2's differential design needs reworking against
-the actual persisted data model before it could be built at all, and should not
-be started without re-measuring first.
+| Approach | Idea | Risk / Limitation | Status |
+|---|---|---|---|
+| **In-memory parse cache + Web Worker** | Keep full tree build, cache unchanged `ParsedModule`s in memory, run build + write off the main thread | Still rewrites the full tree record | **Implemented** |
+| **Differential updates (Add only)** | Analyze affected scope, merge new nodes, recompute affected OIDs | Requires `TreeBuildNode` metadata not stored in IndexedDB; does not remove full tree write | Deferred |
+| **Differential updates (Add + Remove)** | Same as above plus orphan re-linking on deletion | High complexity and correctness risk; same storage floor | Deferred |

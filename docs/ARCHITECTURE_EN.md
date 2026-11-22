@@ -1,34 +1,27 @@
 # Application Architecture
 
-How the pieces of the MIB Browser fit together: what runs where, how a MIB file
-travels from the drop zone to a row in the tree, and which module owns which
-piece of state.
+This document explains how the MIB Browser fits together: what runs where, how a MIB file moves from upload to the rendered tree, and which module owns each piece of state.
 
-For the parsing and tree-building internals see
-[MIB_TREE_CONSTRUCTION_EN.md](./MIB_TREE_CONSTRUCTION_EN.md); this document
-covers everything around them.
+> [!NOTE]
+> For parsing and 3-pass tree-building internals, see [MIB_TREE_CONSTRUCTION_EN.md](./MIB_TREE_CONSTRUCTION_EN.md). For benchmarks and optimization details, see [PERFORMANCE_EN.md](./PERFORMANCE_EN.md).
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Module map](#module-map)
-3. [Data flow](#data-flow)
-4. [State ownership](#state-ownership)
-5. [Rendering the tree](#rendering-the-tree)
+2. [Module Map](#module-map)
+3. [Data Flow](#data-flow)
+4. [State Ownership](#state-ownership)
+5. [Rendering the Tree](#rendering-the-tree)
 6. [Persistence](#persistence)
-7. [Error and conflict surfaces](#error-and-conflict-surfaces)
-8. [Legacy modules](#legacy-modules)
+7. [Error & Conflict Surfaces](#error--conflict-surfaces)
 
 ---
 
 ## Overview
 
-The application is **entirely client-side**. There is no backend, no API call,
-and no MIB ever leaves the browser — the GitHub Pages deployment serves static
-files and nothing else. Everything the user loads lives in IndexedDB in their
-own browser and is theirs to clear.
+The application is **entirely client-side**. There is no backend, no API call, and no MIB file ever leaves the browser—the GitHub Pages deployment serves static assets only. All user data lives in the browser's IndexedDB.
 
-```
+```text
 ┌───────────────────────────────────────────────────────────┐
 │  React UI (src/components)                                │
 │  file upload · MIB list · tree view · node details        │
@@ -37,225 +30,189 @@ own browser and is theirs to clear.
                           ▼
 ┌───────────────────────────────────────────────────────────┐
 │  useMibStorage (src/hooks)                                │
-│  owns the MIB list, the merged tree and the rebuild cycle │
+│  owns the MIB list, the merged tree, and rebuild cycle    │
 └───────────────────────────────────────────────────────────┘
               │                              │
               ▼                              ▼
 ┌──────────────────────────────┐   ┌──────────────────────────┐
-│  rebuild worker              │   │  Persistence             │
+│  Rebuild Worker              │   │  Persistence             │
 │  parse · build · write tree  │   │  indexeddb.ts            │
 │  mib-parser · mib-tree-      │   │  mib-browser-db          │
-│  builder · rebuild.ts        │◀─▶│  (both threads use it)   │
+│  builder · rebuild.ts        │◀─▶│  (used by both threads)  │
 └──────────────────────────────┘   └──────────────────────────┘
 ```
 
-The heavy work — parsing every MIB, merging them into a tree, and writing that
-tree — runs in a Web Worker, so adding or removing a file does not freeze the
-UI. If a worker cannot be created the same pipeline runs inline instead.
+Heavy work—parsing MIBs, merging them into one OID tree, and persisting that tree—runs in a **Web Worker** so adding or removing files does not freeze the UI. If Web Workers are unavailable, the exact same pipeline falls back to running inline on the main thread.
 
-Stack: React 18 + TypeScript, Vite, Tailwind CSS, `lucide-react` /
-`react-icons` for icons, `react-hot-toast` for transient messages. No state
-management library — component state plus one hook is enough at this size.
+**Tech stack:** React 18, TypeScript, Vite, Tailwind CSS, `lucide-react` / `react-icons` for icons, and `react-hot-toast` for transient messages. State is managed with standard React state and a single custom hook (`useMibStorage`).
 
 ---
 
-## Module map
+## Module Map
 
-### `src/lib` — no React, pure logic
+### `src/lib` — Pure Logic (No React)
 
 | File | Responsibility |
 |---|---|
-| `mib-parser.ts` | Turn MIB text into a `ParsedModule` (IMPORTS, objects with unresolved parent names, TEXTUAL-CONVENTIONs). Also `validateMibContent`, `filterTreeByQuery`, `filterTreeToNotifications`, `flattenTree`, `countTreeNodes`. |
-| `mib-tree-builder.ts` | Merge many `ParsedModule`s into one OID tree (`MibTreeBuilder`, 3-pass). |
-| `rebuild.ts` | The whole rebuild pipeline as one plain function: parse (with a session cache), build, per-file bookkeeping, persist the tree. Runs in the worker, or inline if there is none. |
-| `rebuild-client.ts` | Main-thread side of the worker: request/response plumbing, tracking which file contents the worker already has, and the no-worker fallback. |
-| `oid-utils.ts` | `getOidPath` - every prefix from the root to an OID. |
-| `indexeddb.ts` | All IndexedDB access. Nothing else touches the database. |
-| `dropped-files.ts` | The files behind a drop or a folder pick: turns dropped items into File System entries and walks directory entries (batch by batch, subdirectories included) down to their files, skipping dotfiles and dot-directories. |
-| `storage.ts` | Small helpers: `generateId`, `sanitizeFileName`, `formatFileSize`, and the guarded `readSetting` / `writeSetting` used for UI preferences. |
+| `mib-parser.ts` | Parses MIB text into a `ParsedModule` (`IMPORTS`, unresolved objects, `TEXTUAL-CONVENTION`s). Also exports `validateMibContent`, `filterTreeByQuery`, `filterTreeToNotifications`, `flattenTree`, and `countTreeNodes`. |
+| `mib-tree-builder.ts` | Merges multiple `ParsedModule`s into a single OID tree (`MibTreeBuilder`, 3-pass). |
+| `rebuild.ts` | Full rebuild pipeline as a plain function: parse (with session-scoped `parseCache`), build, per-file bookkeeping, and persist tree. Runs in the worker or inline. |
+| `rebuild-client.ts` | Main-thread bridge to the worker: request/response plumbing, tracking which file contents the worker already caches, and the inline fallback. |
+| `oid-utils.ts` | `getOidPath` — returns every OID prefix from the root to a target OID. |
+| `indexeddb.ts` | Sole owner of IndexedDB access. No other module touches the database directly. |
+| `dropped-files.ts` | Walks dropped folders and directory picks (including subdirectories, batch by batch) into files, skipping dotfiles and dot-directories. |
+| `storage.ts` | Small utilities (`generateId`, `sanitizeFileName`, `formatFileSize`) and guarded `readSetting` / `writeSetting` helpers for UI preferences. |
 
 ### `src/workers`
 
 | File | Responsibility |
 |---|---|
-| `rebuild.worker.ts` | Runs `rebuild.ts` off the main thread. Posts the finished tree back, then persists it and posts again. |
+| `rebuild.worker.ts` | Runs `rebuild.ts` off the main thread. Posts the finished tree back immediately, then persists it to IndexedDB and posts a completion signal. |
 
 ### `src/hooks`
 
 | File | Responsibility |
 |---|---|
-| `useMibStorage.ts` | The single source of truth for stored MIBs and the merged tree. Owns upload, delete, import/export, and `rebuildAllTrees`, plus the session-scoped cache of parsed modules. |
+| `useMibStorage.ts` | Single source of truth for stored MIBs and the merged tree. Owns upload, delete, import/export, and `rebuildAllTrees`. |
 
 ### `src/components`
 
 | Component | Responsibility |
 |---|---|
-| `FileUploader` | Drop zone, file dialog and folder picker, multi-file upload with a progress bar, "paste from text" entry point. A dropped folder is walked to its files by `dropped-files.ts`. |
-| `SavedMibsList` | The stored-file list: filter, sort, selection, bulk delete/download. |
-| `MibTreeView` | The merged tree. Flattens the visible branches and renders a windowed slice of them. |
-| `TreeNode` | One row of the tree. Presentational and memoized. |
-| `TreeExpandControls` | Expand all / collapse all / compact view toggle. |
-| `SearchBar` | Query input and result count. |
-| `NodeDetails` | The selected node (re-resolved by OID after every rebuild, so it never shows a node from the previous tree): OID, notation, source file, syntax, enumerated values (the object's own inline `SYNTAX INTEGER { ... }` first, otherwise its TEXTUAL-CONVENTION, looked up in the index stored with the tree), the varbinds of a notification, description, children. |
-| `OidBreadcrumb` | The iso → org → dod → … path above the node details, each segment clickable. |
-| `ConflictNotificationPanel` | Banner listing files that define the same module differently, with a diff dialog. |
-| `NotificationPanel` | Persistent warnings and errors (missing dependencies, failed uploads). Exports the `useNotifications` hook. |
-| `StorageManager` | IndexedDB usage readout, "Rebuild Tree" and "clear everything". |
-| `MibContentModal` | Raw text of a stored MIB. |
-| `TextInputModal` | Paste MIB source instead of uploading a file. |
-| `ConfirmModal` | Confirmation dialog used by the destructive actions. |
-| `ResizablePanel` | Two-pane splitter; remembers its width in `localStorage`. |
+| `FileUploader` | Drop zone, file/folder pickers, multi-file upload progress bar, and "paste from text" entry point. Delegates folder traversal to `dropped-files.ts`. |
+| `SavedMibsList` | Stored-file list with filtering, sorting, multi-select, and bulk delete/download. |
+| `MibTreeView` | Virtualized tree view: flattens visible branches and renders only the viewport window. |
+| `TreeNode` | Memoized, presentational component for a single tree row. |
+| `TreeExpandControls` | Expand all, collapse all, and compact view toggle. |
+| `SearchBar` | Search input and match counter. |
+| `NodeDetails` | Details pane for the selected node (re-resolved by OID after each rebuild): OID, notation, source file, syntax, enumerated values, notification varbinds, description, and children. |
+| `OidBreadcrumb` | Clickable `iso → org → dod → …` path above the details pane. |
+| `ConflictNotificationPanel` | Banner listing files with conflicting module definitions, with a field-by-field diff dialog. |
+| `NotificationPanel` | Persistent warnings and errors (missing dependencies, failed uploads). Exports `useNotifications`. |
+| `StorageManager` | IndexedDB usage display, **Rebuild Tree**, and **Clear All** actions. |
+| `MibContentModal` | Raw text viewer for a stored MIB file. |
+| `TextInputModal` | Modal for pasting raw MIB source instead of uploading a file. |
+| `ConfirmModal` | Confirmation dialog for destructive actions. |
+| `ResizablePanel` | Two-pane splitter that persists its width in `localStorage`. |
 
-`App.tsx` wires these together and owns the view state (selection, query,
-expansion). It holds no persisted MIB data of its own.
+`App.tsx` wires these components together and owns transient view state (selection, search query, expanded OIDs). It holds no persisted MIB data of its own.
 
 ---
 
-## Data flow
+## Data Flow
 
 ### Adding a MIB
 
-```
+```text
 FileUploader
-   │ one call per file; skipReload = true for every file but the last
+   │ one call per file; skipReload = true for every file except the last
    ▼
 useMibStorage.uploadMib(file)
-   │
    ├─ validateMibContent(text)          reject non-MIB files early
-   ├─ parseMibModule(text, fileName)    only to learn the module name
-   ├─ getMibByFileName(fileName)        reuse the id if replacing a file
-   ├─ saveMib(record)                   nodeCount/conflicts filled in later
-   │
-   └─ (last file only) rebuildAllTrees() ─▶ loadData()
+   ├─ parseMibModule(text, fileName)    extract the module name
+   ├─ getMibByFileName(fileName)        reuse existing id if replacing a file
+   ├─ saveMib(record)                   nodeCount and conflicts filled in later
+   └─ (last file only) rebuildAllTrees()
 ```
 
-The tree is built **once** per batch, not once per file. The parse done on the
-way in (to read the module name) is handed to the rebuild through the parse
-cache, so a file is parsed once overall.
+The tree is built **once per batch**, not once per file. The parse performed on upload to read the module name is passed into the parse cache via `noteParsedModule`, so each uploaded file is parsed only once.
 
-### Rebuilding the merged tree
+### Rebuilding the Merged Tree
 
-`rebuildAllTrees()` is the expensive path, and every mutation ends in it: upload,
-delete, JSON import, and the manual **Rebuild Tree** button.
+`rebuildAllTrees()` is the central mutation path, triggered by upload, delete, JSON import, and the manual **Rebuild Tree** button.
 
-```
-main thread                          rebuild worker
+```text
+Main Thread                          Rebuild Worker
 ───────────                          ──────────────
 getAllMibs()
-   │  post { mibs }, content only
-   │  for files the worker lacks
-   └──────────────────────────────▶  parse each file
-                                     (cached parses reused)
+   │ post { mibs } (include content
+   │ only for uncached files)
+   └──────────────────────────────▶  parse each file (reuse cached parses)
                                         ▼
                                      MibTreeBuilder.buildTree()
-                                        │
                                         ├─ "Missing MIB dependencies: X"
-                                        │    → drop every module importing X,
-                                        │      record the error, retry
-                                        │      (up to 10 times)
-                                        ▼
-                                        ├─ definitions with an anchor no
-                                        │    file defines → recorded against
-                                        │    the file they came from
+                                        │    → drop modules importing X,
+                                        │      record error, retry (up to 10×)
+                                        ├─ unplaced definitions (unknown anchor)
+                                        │    → record error against source file
                                         ▼
                                      per-file bookkeeping
-                                     node counts, conflicts, errors
+                                     (node counts, conflicts, errors)
    ┌──────────────────────────────◀  post { tree, tcs, files }
    ▼                                    ▼
 apply bookkeeping to records         saveMergedTree()
-publish to React state  ← UI here       ▼
+publish to React state  ← UI ready      ▼
    ▼                                 post { persisted }
 saveMibs(changed)      ◀────────────────┘
 ```
 
-The tree is posted back before it is written, so the UI renders it while the
-worker is still persisting. Nothing reads back what was just written.
+Key design points of this pipeline:
+- **Render before persist:** The worker posts the built tree back before writing it to IndexedDB, so the UI renders immediately while persistence finishes in the background.
+- **Minimal cross-thread payload:** Only file contents that the worker does not already hold in its parse cache are sent over `postMessage`. Sending all file text every time would cost roughly as much as parsing it.
+- **No redundant read-back:** `loadData()` (full IndexedDB read) only runs on startup, after a failed rebuild, or after operations that don't rebuild (import, clear).
 
-Only the contents of files the worker has not already parsed are sent — posting
-all of them costs about as much as parsing them, which would defeat the point.
+### Rendering Pipeline
 
-`loadData()` — the full read from IndexedDB — now runs on startup, after a
-failed rebuild, and after operations that do not rebuild (import, clear).
-
-### Rendering
-
-```
-mergedTree ──▶ filterTreeToNotifications(traps only) ──▶ typeFilteredTree
-                                                        │
-                            filterTreeByQuery(deferred query)
-                                                        ▼
-                                                   filteredTree
-                                                        │
-                                    expandedOids, compactMode
-                                                        ▼
-                                            flattenVisibleRows()
-                                                        │
-                                              slice to the viewport
-                                                        ▼
-                                                  <TreeNode> rows
+```text
+mergedTree
+   │
+   ▼ filterTreeToNotifications (when "Traps only" is on)
+typeFilteredTree
+   │
+   ▼ filterTreeByQuery (using deferred search query)
+filteredTree
+   │
+   ▼ flattenVisibleRows (using expandedOids & compactMode)
+TreeRow[]
+   │
+   ▼ slice to viewport (+ overscan)
+<TreeNode> rows
 ```
 
 ---
 
-## State ownership
+## State Ownership
 
-| State | Lives in | Persisted as |
+| State | Owner | Persistence |
 |---|---|---|
 | Stored MIB records | `useMibStorage` | IndexedDB store `mibs` |
-| Merged tree | `useMibStorage` | IndexedDB store `mergedTree` |
-| Storage usage figures | `useMibStorage` | derived, not persisted |
+| Merged tree & TCs | `useMibStorage` | IndexedDB store `mergedTree` |
+| Storage usage figures | `useMibStorage` | Derived (not persisted) |
 | Selected node | `App` | — |
 | Search query | `App` | — |
 | Expanded OIDs | `App` (`Set<string>`) | — |
-| Compact view | `App` | `localStorage: mib-browser-compact-mode` |
-| Traps-only filter | `App` | `localStorage: mib-browser-notifications-only` |
-| Panel widths | `ResizablePanel` | `localStorage: mib-browser-sidebar-width`, `mib-browser-panel-width` |
+| Compact view | `App` | `localStorage`: `mib-browser-compact-mode` |
+| Traps-only filter | `App` | `localStorage`: `mib-browser-notifications-only` |
+| Panel widths | `ResizablePanel` | `localStorage`: `mib-browser-sidebar-width`, `mib-browser-panel-width` |
 | Notifications | `useNotifications` in `App` | — |
 
-Expansion state is keyed by **OID string**, not by node object, so it survives a
-tree rebuild: reloading a file leaves the tree open where the user left it.
+Because expansion state is keyed by **OID string** rather than node object reference, it survives tree rebuilds—reloading a file keeps the tree open right where the user left it.
 
 ---
 
-## Rendering the tree
+## Rendering the Tree
 
-A merged tree of a few hundred vendor MIBs runs to tens of thousands of nodes,
-so the tree view never renders all of it.
+A merged tree of a few hundred vendor MIBs easily reaches tens of thousands of nodes, so the tree view never mounts all of them in the DOM.
 
-**Flatten, then window.** `flattenVisibleRows()` walks only branches that are
-expanded and produces a flat `TreeRow[]`; the component renders a spacer sized
-to `rows.length * ROW_HEIGHT` and absolutely positions just the rows that fall
-inside the viewport (plus `OVERSCAN` above and below). Expanding everything
-costs a constant number of DOM nodes rather than one per MIB object.
+### Virtualization (Flatten, Then Window)
+`flattenVisibleRows()` walks only expanded branches to produce a flat `TreeRow[]`. `MibTreeView` renders a spacer sized to `rows.length * ROW_HEIGHT` and absolutely positions only the rows inside the viewport (plus `OVERSCAN` above and below). Expanding the entire tree therefore costs a constant number of DOM nodes.
 
-Rows are a fixed **28 px** (`ROW_HEIGHT` in `TreeNode.tsx`, `h-7` on the row).
-Changing the row's height class means changing that constant too — the window
-maths depends on every row being the same height.
+> [!IMPORTANT]
+> Every row has a fixed height of **28 px** (`ROW_HEIGHT` in `TreeNode.tsx`, Tailwind class `h-7`). If you change the row height class, update `ROW_HEIGHT` to match—windowing calculations rely on uniform row height.
 
-**Compact view** folds a chain of single-child nodes into one row
-(`iso / org / dod / internet`). The row acts on the *last* node of the chain: it
-is that node's OID that goes into `expandedOids`, and clicking selects it.
-`chainOids` keeps the whole chain so selection highlighting still works when the
-user navigates to an intermediate node from the breadcrumb.
+### Compact View
+Folds chains of single-child nodes into one row (`iso / org / dod / internet`). Interactions target the *last* node of the chain (its OID is added to `expandedOids` and selected on click), while `chainOids` tracks all intermediate OIDs so selection highlighting still works when navigating via the breadcrumb.
 
-**Expansion** is a `Set<string>` of OIDs held by `App`. Collapsing removes the
-OID *and every descendant OID* in one update, found by string prefix — there is
-no walk of the subtree. Selecting a node expands the path to it, but the `Set`
-keeps its identity when that path is already open: it is an input to the row
-model, so replacing it rebuilds every row.
+### Expansion
+Held as a `Set<string>` of OIDs in `App`.
+- **Collapsing** removes the target OID and all descendant OIDs in one pass using string prefix matching—no subtree traversal needed.
+- **Selecting a node** expands the path to it, but preserves the `Set`'s object identity if the path is already open so the row model isn't needlessly rebuilt.
 
-**Search** filters the tree rather than just highlighting: `filterTreeByQuery`
-keeps nodes that match on name, OID or description, plus their ancestors. It
-runs against a `useDeferredValue` copy of the query, so typing stays responsive
-while a large tree is re-filtered at lower priority.
+### Search
+`filterTreeByQuery` filters the tree rather than merely highlighting, keeping nodes matching on name, OID, or description along with their ancestors. It runs on a `useDeferredValue` copy of the query so typing remains responsive while large trees re-filter at lower priority.
 
-**Traps only** is the same shape of filter, on node type instead of text:
-`filterTreeToNotifications` keeps notification nodes — SMIv2 `NOTIFICATION-TYPE`
-and SMIv1 `TRAP-TYPE` alike — and their ancestors.
-It is applied to `mergedTree` *before* the search, so searching while the filter
-is on searches the traps. What is left is only the branches leading to
-notifications, so `App` expands them automatically — otherwise every trap would
-still be several clicks deep.
+### Traps Only
+`filterTreeToNotifications` keeps notification nodes (SMIv2 `NOTIFICATION-TYPE` and SMIv1 `TRAP-TYPE`) and their ancestors. It runs *before* search so searching while enabled searches within traps. Because only branches leading to traps remain, `App` expands them automatically.
 
 ---
 
@@ -263,55 +220,36 @@ still be several clicks deep.
 
 ### IndexedDB
 
-Database `mib-browser-db`, version 2. The connection is opened once and cached
-in `indexeddb.ts`; it is dropped and reopened if the browser closes it or
-another tab requests a version change.
+Database: `mib-browser-db` (version 2). The connection is opened once and cached in `indexeddb.ts`, and automatically reopened if the browser closes it or another tab triggers a version change.
 
 | Store | Key | Contents |
 |---|---|---|
-| `mibs` | `id` | One `StoredMibData` per file: original text, size, timestamps, module name, node count, and any conflicts or dependency errors. Indexes: `fileName`, `uploadedAt`. |
-| `mergedTree` | `id` | A single record `{ id: 'merged-tree', tree, textualConventions }` holding the whole built tree, plus the TEXTUAL-CONVENTIONs collected while parsing. Written by the rebuild worker; the `mibs` store is written by the main thread. The rebuild has already parsed every module, so storing them saves the details panel from re-parsing every MIB to resolve a node's SYNTAX. Trees stored before this field existed simply lack it, and the details panel falls back to parsing on demand. |
+| `mibs` | `id` | One `StoredMibData` record per file: raw text, size, timestamps, module name, node count, conflicts, and dependency errors. Indexes: `fileName`, `uploadedAt`. |
+| `mergedTree` | `id` | Single record `{ id: 'merged-tree', tree, textualConventions }` containing the built OID tree and all parsed `TEXTUAL-CONVENTION`s. |
 
-Storing the original text of every file is deliberate: a rebuild needs to
-re-parse everything, and the raw MIB is what the content viewer shows.
+Additional details:
+- **Why store `textualConventions` with the tree?** The rebuild already parses every module. Storing collected TCs alongside the tree lets `NodeDetails` resolve `SYNTAX` enumerations via a fast lookup (checking inline `SYNTAX INTEGER { ... }` first, then the TC index) instead of re-parsing MIB files. Older trees without this field fall back to on-demand parsing.
+- **Why store raw MIB text?** Rebuilds need the original source to re-parse, and `MibContentModal` displays it directly.
+- **Thread ownership:** The rebuild worker writes `mergedTree`; the main thread writes `mibs`.
+- **Storage usage readout:** Uses `navigator.storage.estimate().usage` (which reflects actual origin quota including the merged tree), falling back to summing stored file sizes if the API is unavailable.
+- **Transaction safety:** Write promises resolve on transaction completion rather than request success, preventing false positives when a commit fails (e.g., quota exceeded).
 
-Reported usage is `navigator.storage.estimate().usage` — an approximation of
-what the whole origin is using rather than an exact IndexedDB figure, but it is
-the number the quota is charged against, and it counts the merged tree. Summing
-the stored file sizes, which is what the readout used to show, left out the
-largest record in the database. The sum is still the fallback when the browser
-offers no estimate.
+### `localStorage`
 
-Writes settle on the transaction, not on the request: a `put` succeeds well
-before the transaction commits, and a commit can still fail — a full quota is
-the usual way — so resolving on the request reported data as saved that never
-reached the disk.
+Stores only lightweight UI preferences (compact view, traps-only filter, panel widths). On startup, `migrateFromLocalStorage()` migrates any legacy MIB data stored under `mib-browser-mibs` into IndexedDB and removes the old key.
 
-### localStorage
+### Escape Hatch (`?reset=true`)
 
-Only UI preferences (compact view, panel widths). An older version stored MIBs
-under `mib-browser-mibs`; `migrateFromLocalStorage()` moves any such data into
-IndexedDB on startup and then removes it.
-
-### Escape hatch
-
-Loading the page with **`?reset=true`** clears both stores before the first
-render, for when stored data is what is keeping the app from starting. The
-parameter is stripped from the URL immediately, and it is the only query
-parameter the app reads.
+Loading the app with **`?reset=true`** clears both IndexedDB stores before the initial render—useful if corrupted data prevents startup. The parameter is immediately stripped from the URL and is the only query parameter the app reads.
 
 ---
 
-## Error and conflict surfaces
+## Error & Conflict Surfaces
 
-Three different things can go wrong with a MIB, and each has its own surface:
-
-| Situation | Detected in | Shown by |
+| Situation | Detected In | User Surface |
 |---|---|---|
-| Not a MIB file at all (no `DEFINITIONS ::= BEGIN`, no `END`, no object definitions) | `validateMibContent` during upload | Toast, plus an entry in the notification panel. In a folder import such a file is counted as skipped instead: a folder of MIBs also holds readmes and archives, and those are not upload errors. |
-| Imports a module that has not been loaded | `MibTreeBuilder` throws; `rebuildAllTrees` marks the dependants | Warning in the notification panel, error badge on the file row. The file stays stored with `nodeCount: 0` and starts contributing as soon as the missing MIB is added. |
-| Two files define the same module differently | `rebuildAllTrees`, comparing objects of same-named modules field by field | Conflict banner with a per-object diff and a delete action |
+| **Not a MIB file** (missing `DEFINITIONS ::= BEGIN`, `END`, or object definitions) | `validateMibContent` on upload | Toast and notification panel entry. During folder import, counted as *skipped* instead of an error (since folders often include READMEs or archives). |
+| **Missing dependency** (imports an unloaded module) | `MibTreeBuilder` throws; `rebuildAllTrees` marks dependents | Warning in notification panel and error badge on the file row. File stays stored with `nodeCount: 0` and resolves automatically once the missing MIB is uploaded. |
+| **Conflicting definitions** (two files define the same module differently) | `rebuildAllTrees` field-by-field comparison | Conflict banner with a per-object diff dialog and delete action. |
 
-A missing dependency never blocks the rest of the tree: the affected modules are
-dropped and the build is retried without them.
-
+A missing dependency never blocks the rest of the tree: affected modules are excluded and the build retries without them.

@@ -1,70 +1,76 @@
-# Test data
+# Test Data
 
-MIB files for exercising the browser by hand. Nothing here is shipped with the
-build — `public/sample-mibs/SAMPLE-MIB.txt` is the file that gets deployed.
+Synthetic MIB files for manually testing the browser and benchmarking performance.
 
-All of it is synthetic. The fixtures are anchored under the private enterprise
-number `99999` (`1.3.6.1.4.1.99999`) and the generated corpus under `900000+`,
-so neither collides with a real vendor MIB you might load alongside them.
+> [!NOTE]
+> Nothing in this directory is bundled into the production build. Only [`public/sample-mibs/SAMPLE-MIB.txt`](../public/sample-mibs/SAMPLE-MIB.txt) is deployed with the app.
 
-## `mibs/` — behaviour fixtures
+All test data uses synthetic private enterprise numbers so it will not collide with real vendor MIBs loaded alongside it:
+- **Fixtures (`mibs/`):** anchored under enterprise `99999` (`1.3.6.1.4.1.99999`)
+- **Generated corpus (`generated/`):** anchored under enterprise `900000+`
 
-Small handwritten modules, each aimed at one thing that is awkward to trigger
-with a single well-formed MIB. Load the whole directory at once for the full
-picture, or individual files to isolate a case.
+---
 
-| File | What it covers |
+## `mibs/` — Behavior Fixtures
+
+Small, handwritten MIB modules that each target an edge case hard to trigger with a single well-formed MIB. Load the entire directory at once to exercise everything together, or load individual files to isolate a specific case.
+
+| File | What it tests |
 |---|---|
-| `TEST-BASE-MIB.txt` | The root of the fixture set. Scalars with `DisplayString` / `Integer32` syntax and a `deprecated` object. |
-| `TEST-EXTENSION-MIB.txt` | Imports an anchor node from `TEST-BASE-MIB` and hangs a table off it. Load it *before* the base module to confirm upload order does not matter. |
-| `TEST-MULTI-SUBID-MIB.txt` | OID assignments that skip levels — `::= { parent 3011 7124 3282 }` and the named-number form `::= { parent ieee(111) lan-man-stds(802) 1 }`. The skipped sub-identifiers have no node of their own, which the tree walk and the breadcrumb both have to handle. |
-| `TEST-MISSING-DEP-MIB.txt` | Imports from `TEST-ABSENT-MIB`, which is deliberately not supplied. Should report `Missing MIB dependencies: TEST-ABSENT-MIB` against the file and leave the rest of the tree usable. |
-| `TEST-CONFLICT-A.txt` / `TEST-CONFLICT-B.txt` | Two files declaring the same module name (`TEST-CONFLICT-MIB`) with the same object names but different `SYNTAX`, `MAX-ACCESS`, `STATUS` and `DESCRIPTION`. Loading both raises the conflict panel. |
-| `TEST-TC-ONLY-MIB.txt` | A module defining nothing but `TEXTUAL-CONVENTION`s, as `IPV6-TC` (RFC 2465) does. It contributes no nodes to the tree, but must still be accepted on upload: other modules import its types, and the details panel resolves `SYNTAX` against it. |
-| `TEST-EMPTY-MODULE-MIB.txt` | A module whose body is entirely commented out, as RFC-1212 is shipped in most MIB collections. It is a valid module that defines nothing: uploading it must succeed and contribute 0 nodes, so a bulk upload of a standard MIB directory does not report errors for files like this. |
-| `TEST-V1-TRAP-MIB.txt` | An SMIv1 module (RFC 1155 / RFC 1215) whose traps are declared with `TRAP-TYPE`. A trap has no OID of its own — an `ENTERPRISE` node and a specific-trap number — so it has to land at `<enterprise>.0.<number>`. One trap carries a `VARIABLES` clause and one carries none. Its `v1TrapReason` also spells an enumeration out inline, which the `SYNTAX` clause has to keep whole. |
-| `TEST-IEEE-ANCHOR-MIB.txt` | The shape IEEE 802.1 modules are written in, which sent every definition of `IEEE8021-SECY-MIB` out of the tree in silence. It anchors itself at `::= { iso(1) std(0) iso8802(8802) ... }` — a root arc in the named-number form, with no node defined for the arcs it passes through — names two objects with hyphens in them (`member-body`, `ieee-anchor-leaf`), and quotes a definition inside a DESCRIPTION the way IF-MIB does. |
-| `TEST-ODD-HEADER-MIB.txt` | Module name, then a comment, then `DEFINITIONS IMPLICIT TAGS ::= BEGIN` on a later line. Real MIBs are laid out this way, and the module name has to be found across the comment. |
+| `TEST-BASE-MIB.txt` | Root of the fixture set. Defines scalars with `DisplayString` / `Integer32` syntax and a `deprecated` object. |
+| `TEST-EXTENSION-MIB.txt` | Imports an anchor from `TEST-BASE-MIB` and attaches a table. Load it *before* the base module to verify upload order independence. |
+| `TEST-MULTI-SUBID-MIB.txt` | Multi-sub-identifier assignments that skip intermediate levels (`::= { parent 3011 7124 3282 }` and `::= { parent ieee(111) lan-man-stds(802) 1 }`), exercising tree traversal and breadcrumbs without intermediate nodes. |
+| `TEST-MISSING-DEP-MIB.txt` | Imports from an intentionally absent `TEST-ABSENT-MIB`. Verifies that `Missing MIB dependencies: TEST-ABSENT-MIB` is reported while the rest of the tree remains usable. |
+| `TEST-CONFLICT-A.txt` / `TEST-CONFLICT-B.txt` | Two files declaring `TEST-CONFLICT-MIB` with the same object names but differing `SYNTAX`, `MAX-ACCESS`, `STATUS`, and `DESCRIPTION`. Verifies conflict detection and diffing. |
+| `TEST-TC-ONLY-MIB.txt` | Defines only `TEXTUAL-CONVENTION`s (like `IPV6-TC` / RFC 2465). Contributes 0 tree nodes, but must be accepted so other modules and the details panel can resolve its types. |
+| `TEST-EMPTY-MODULE-MIB.txt` | A valid module whose body is entirely commented out (like standard `RFC-1212` distributions). Must upload cleanly with 0 nodes so bulk imports don't error. |
+| `TEST-V1-TRAP-MIB.txt` | SMIv1 module (RFC 1155 / 1215) with `TRAP-TYPE` definitions mapped to `<enterprise>.0.<number>`, both with and without `VARIABLES`, plus an inline `SYNTAX INTEGER { ... }` enumeration (`v1TrapReason`). |
+| `TEST-IEEE-ANCHOR-MIB.txt` | IEEE 802.1 style: named-number root arc (`::= { iso(1) std(0) iso8802(8802) ... }`), hyphenated names (`member-body`, `ieee-anchor-leaf`), and an example definition quoted inside a `DESCRIPTION` (like `IF-MIB`). |
+| `TEST-ODD-HEADER-MIB.txt` | Module name separated from `DEFINITIONS IMPLICIT TAGS ::= BEGIN` by a comment on a preceding line. |
 
-Expected results once all eleven are loaded:
+### Expected Results (All 11 Files Loaded)
 
-- 1 conflict pair (`TEST-CONFLICT-A.txt` ⇄ `TEST-CONFLICT-B.txt`, 3 differing objects)
-- 1 missing-dependency warning naming `TEST-ABSENT-MIB`
-- `deepLeaf` resolves to `1.3.6.1.4.1.99999.3.3011.7124.3282.1`
-- `namedLeaf` resolves to `1.3.6.1.4.1.99999.3.111.802.1.1`
-- `oddCounter` resolves to `1.3.6.1.4.1.99998.1`
-- `v1CardRemoved` resolves to `1.3.6.1.4.1.99999.5.0.1` and lists `v1TrapReason`
-  under Variables; both it and `v1CardInserted` survive the "Traps Only" filter
-- `v1TrapReason` shows `INTEGER` as its syntax and offers `unknown` /
-  `overheated` / `unplugged` as values
-- `testIeeeAnchorMIB` resolves to `1.0.8802.1.1.99999` and `member-body` to
-  `1.2`, and no node called `noTest` exists — the one in a description is prose
-- `TestPortState` and `TestMacAddress` are offered as enumerated values in the
-  details panel, though `TEST-TC-ONLY-MIB` adds no rows to the tree
+**Diagnostics:**
+- **1 conflict pair:** `TEST-CONFLICT-A.txt` ⇄ `TEST-CONFLICT-B.txt` (3 differing objects)
+- **1 missing-dependency warning:** names `TEST-ABSENT-MIB`
 
-These expectations are asserted by [`tests/fixtures.test.ts`](../tests/fixtures.test.ts),
-so a fixture added here wants a case added there as well — otherwise the file is
-documentation that nothing checks.
+**OID Resolution:**
+- `deepLeaf` → `1.3.6.1.4.1.99999.3.3011.7124.3282.1`
+- `namedLeaf` → `1.3.6.1.4.1.99999.3.111.802.1.1`
+- `oddCounter` → `1.3.6.1.4.1.99998.1`
+- `testIeeeAnchorMIB` → `1.0.8802.1.1.99999`
+- `member-body` → `1.2`
+- No `noTest` node exists (it appears only as prose inside a `DESCRIPTION`)
 
-## `generate-large-corpus.mjs` — volume for performance work
+**Traps & Textual Conventions:**
+- `v1CardRemoved` → `1.3.6.1.4.1.99999.5.0.1` and lists `v1TrapReason` under **Variables**.
+- Both `v1CardRemoved` and `v1CardInserted` remain visible under the **Traps Only** filter.
+- `v1TrapReason` displays `INTEGER` syntax with enumerated values `unknown`, `overheated`, and `unplugged`.
+- `TestPortState` and `TestMacAddress` resolve as enumerated values in the details panel, even though `TEST-TC-ONLY-MIB` adds no tree rows.
 
-The fixtures above are far too small to show anything about performance, and
-committing a few megabytes of near-identical generated MIBs would only bloat
-the repository. Generate them instead:
+> [!IMPORTANT]
+> These expectations are automatically verified by [`tests/fixtures.test.ts`](../tests/fixtures.test.ts). Whenever you add a fixture here, add a corresponding assertion there so the documentation stays tested.
+
+---
+
+## `generate-large-corpus.mjs` — Performance Corpus Generator
+
+The handwritten fixtures above are too small for performance profiling, and committing megabytes of synthetic MIBs would bloat the repository. Generate large corpora locally instead:
 
 ```bash
-node test-data/generate-large-corpus.mjs                # 60 modules x 200 objects (~12k nodes, ~2 MB)
-node test-data/generate-large-corpus.mjs 400 150        # ~63k nodes, ~14 MB
-node test-data/generate-large-corpus.mjs 10 50 /tmp/mib # custom output directory
+node test-data/generate-large-corpus.mjs                # 60 modules × 200 objects (~12k nodes, ~2 MB)
+node test-data/generate-large-corpus.mjs 400 150        # 400 modules × 150 objects (~63k nodes, ~14 MB)
+node test-data/generate-large-corpus.mjs 10 50 /tmp/mib # Custom output directory
 ```
 
-Output goes to `test-data/generated/` (git-ignored) as `GEN-<n>-MIB.txt`. Each
-module is self-contained apart from `SNMPv2-SMI`, sits under its own enterprise
-number, and nests its objects a few levels deep, so the modules merge into one
-wide tree the way a vendor MIB collection does. Descriptions are padded to a
-realistic length so that searching costs what it would on real data.
+### How It Works
 
-Drag the directory onto the drop zone, or select all the files in the file
-dialog, then exercise Expand All, scrolling, search and node selection.
+- Writes `GEN-<n>-MIB.txt` files to `test-data/generated/` (git-ignored) by default.
+- Each module depends only on `SNMPv2-SMI`, sits under its own enterprise number, and nests objects several levels deep—producing a wide merged tree similar to a real vendor MIB collection.
+- Descriptions are padded to realistic lengths so search benchmarks reflect real-world cost.
 
-Use `?reset=true` on the URL to clear IndexedDB between runs.
+### Testing Workflow
+
+1. Drag the generated directory onto the drop zone (or select all files via the file dialog).
+2. Exercise **Expand All**, scrolling, search, and node selection.
+3. Reload with `?reset=true` in the URL to clear IndexedDB between benchmark runs.
