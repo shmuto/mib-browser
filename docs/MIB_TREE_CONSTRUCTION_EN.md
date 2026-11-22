@@ -1,45 +1,51 @@
-# MIB Tree Construction Logic - Detailed Documentation
+# MIB Tree Construction Logic
 
-How MIB text becomes a merged OID tree. For the surrounding application — UI,
-state, persistence — see [ARCHITECTURE_EN.md](./ARCHITECTURE_EN.md); for the
-cost of each stage see [PERFORMANCE_EN.md](./PERFORMANCE_EN.md).
+How raw MIB text becomes a unified SNMP OID tree.
+
+> [!NOTE]
+> For the surrounding application (UI, state ownership, Web Worker plumbing, and IndexedDB), see [ARCHITECTURE_EN.md](./ARCHITECTURE_EN.md). For benchmarks and optimizations, see [PERFORMANCE_EN.md](./PERFORMANCE_EN.md).
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Architecture](#architecture)
-3. [3-Pass Approach](#3-pass-approach)
-4. [OID Hierarchy Management](#oid-hierarchy-management)
-5. [Error Handling](#error-handling)
-6. [Tree Rebuild Process](#tree-rebuild-process)
-7. [Complete Flow Diagram](#complete-flow-diagram)
+2. [Data Structures & Symbol Maps](#data-structures--symbol-maps)
+3. [Parsing (`mib-parser.ts`)](#parsing-mib-parserts)
+4. [3-Pass Tree Construction (`mib-tree-builder.ts`)](#3-pass-tree-construction-mib-tree-builderts)
+5. [Error Handling & Recovery](#error-handling--recovery)
+6. [Rebuild Pipeline & Conflict Detection](#rebuild-pipeline--conflict-detection)
+7. [End-to-End Flow Diagram](#end-to-end-flow-diagram)
 8. [Key Design Decisions](#key-design-decisions)
+9. [Critical Functions Summary](#critical-functions-summary)
+10. [Complexity & Performance](#complexity--performance)
+11. [Troubleshooting Guide](#troubleshooting-guide)
 
 ---
 
 ## Overview
 
-The MIB tree construction system is a robust solution for parsing multiple MIB modules and integrating them into a unified SNMP OID hierarchy tree. The primary implementation is in the `MibTreeBuilder` class (`src/lib/mib-tree-builder.ts`), which employs a **3-pass approach**.
+The MIB tree builder parses multiple MIB modules and merges them into a single SNMP OID hierarchy regardless of load order. The core algorithm lives in `MibTreeBuilder` (`src/lib/mib-tree-builder.ts`) and runs in **three passes** (plus an orphan-rescue step between Pass 2 and Pass 3).
 
-### Key Components
+### Key Files
 
 | File | Purpose |
-|------|---------|
-| `src/lib/mib-tree-builder.ts` | Core tree building logic (3-pass processing) |
-| `src/lib/mib-parser.ts` | MIB grammar parsing |
-| `src/lib/oid-utils.ts` | `getOidPath`, the one OID helper the UI needs |
-| `src/hooks/useMibStorage.ts` | Tree rebuild and lifecycle management |
-| `src/lib/indexeddb.ts` | Tree persistence |
+|---|---|
+| `src/lib/mib-parser.ts` | MIB grammar parsing, masking, `SYNTAX` and `TRAP-TYPE` extraction, tree filtering |
+| `src/lib/mib-tree-builder.ts` | Core 3-pass tree construction (`MibTreeBuilder`) |
+| `src/lib/oid-utils.ts` | `getOidPath` — computes every OID prefix from root to target |
+| `src/lib/rebuild.ts` | Full rebuild pipeline, parse cache, error recovery, conflict detection |
+| `src/workers/rebuild.worker.ts` | Runs `rebuild.ts` off the main thread |
+| `src/hooks/useMibStorage.ts` | React lifecycle integration and state publishing |
+| `src/lib/indexeddb.ts` | Tree and MIB persistence |
 
 ---
 
-## Architecture
+## Data Structures & Symbol Maps
 
-### Data Structures
+Authoritative TypeScript definitions live in `src/types/mib.ts`.
 
-The authoritative definitions are in `src/types/mib.ts`.
+### Core Types
 
-#### ParsedModule
+#### `ParsedModule` (Parser Output)
 ```typescript
 interface ParsedModule {
   moduleName: string;              // Module name
@@ -50,16 +56,14 @@ interface ParsedModule {
 }
 ```
 
-#### RawMibObject
-Parsed but not yet resolved: the parent is still a *name*, and the position
-under it is a sub-identifier.
-
+#### `RawMibObject` (Unresolved Definition)
+Parsed from text, with an unresolved parent *name* and relative sub-identifier(s):
 ```typescript
 interface RawMibObject {
   name: string;
   parentName: string;           // Unresolved parent name (e.g., "system")
-  subid: number | number[];     // One subid, or several for { parent 3011 7124 3282 }
-  type: string;                 // "OBJECT-TYPE" | "OBJECT IDENTIFIER" | ...
+  subid: number | number[];     // Single subid, or array for { parent 3011 7124 3282 }
+  type: string;                 // "OBJECT-TYPE" | "OBJECT IDENTIFIER" | "TRAP-TYPE" | ...
   description?: string;
   syntax?: string;
   access?: string;
@@ -68,31 +72,27 @@ interface RawMibObject {
 }
 ```
 
-#### MibNode (final output)
+#### `MibNode` (Final Output)
 ```typescript
 interface MibNode {
   oid: string;            // Absolute OID (e.g., "1.3.6.1.2.1.1.1")
   name: string;           // Node name (e.g., "sysDescr")
-  parent: string | null;  // Parent's OID, not a node reference
-  type: string;           // OBJECT-TYPE type
-  syntax: string;         // SYNTAX, whole: "INTEGER { up(1), down(2) }"
-  access: string;         // ACCESS/MAX-ACCESS
+  parent: string | null;  // Parent's OID string (not an object reference)
+  type: string;           // Definition type
+  syntax: string;         // Whole SYNTAX clause: "INTEGER { up(1), down(2) }"
+  access: string;         // ACCESS / MAX-ACCESS
   status: string;         // STATUS
   description: string;    // DESCRIPTION
-  children: MibNode[];    // Child node array
+  children: MibNode[];    // Child nodes
   isExpanded?: boolean;
-  mibName?: string;       // Module the node came from
+  mibName?: string;       // Source module name
   fileName?: string;      // Source file name
-  variables?: string[];   // VARIABLES / OBJECTS of a notification
+  variables?: string[];   // VARIABLES (SMIv1) / OBJECTS (SMIv2) of a notification
 }
 ```
 
-#### TreeBuildNode
-The builder's working node: a `MibNode` plus the fields needed to resolve it.
-Note that `parent` is inherited from `MibNode` and holds the parent's **OID
-string**, filled in during Pass 3 — the parent-child relationship itself lives
-in the `children` arrays.
-
+#### `TreeBuildNode` (Builder Working Node)
+Extends `MibNode` with temporary resolution fields. `parent` (inherited from `MibNode`) holds the parent's **OID string** once filled in during Pass 3; the tree links themselves live in `children`.
 ```typescript
 interface TreeBuildNode extends MibNode {
   parentName?: string | null;   // Unresolved parent name
@@ -101,422 +101,47 @@ interface TreeBuildNode extends MibNode {
 }
 ```
 
-### Symbol Maps
+### Symbol Maps Used by `MibTreeBuilder`
 
-The tree building process uses three main maps:
-
-1. **symbolMap**: `Map<string, TreeBuildNode>`
-   - Key: `"ModuleName::ObjectName"` (e.g., `"SNMPv2-MIB::system"`)
-   - Value: Node object
-   - Purpose: Unique reference resolution within modules
-   - Seed nodes are registered under the module name `SNMPv2-SMI`
-     (`"SNMPv2-SMI::iso"`, …)
-
-2. **nameMap**: `Map<string, TreeBuildNode[]>`
-   - Key: `"ObjectName"` (e.g., `"system"`)
-   - Value: Array of nodes with the same name (can be defined in multiple modules)
-   - Purpose: Cross-module search and fallback
-
-3. **importsMap**: `Map<string, Map<string, string>>`
-   - Key: Module name
-   - Value: `{ ImportedSymbolName → SourceModuleName }`
-   - Purpose: Reference resolution based on IMPORTS clause
-
-Two lookup indexes support them:
-
-4. **seedMap**: `Map<string, TreeBuildNode>` — seed nodes by name.
-5. **childIndex**: `Map<TreeBuildNode, Map<string, TreeBuildNode>>` — for each
-   parent, its children keyed by `"name|subid"`. This is what makes duplicate
-   detection a map lookup instead of a scan of the children array; without it,
-   linking under a parent with many children (`enterprises` with hundreds of
-   vendor MIBs) is quadratic.
+| Map | Type | Purpose |
+|---|---|---|
+| `symbolMap` | `Map<string, TreeBuildNode>` | Keyed by `"ModuleName::ObjectName"` (e.g., `"SNMPv2-MIB::system"`). O(1) module-scoped resolution. Seed nodes use `"SNMPv2-SMI"`. |
+| `nameMap` | `Map<string, TreeBuildNode[]>` | Keyed by `"ObjectName"`. Supports cross-module fallback when a name is globally unique. |
+| `importsMap` | `Map<string, Map<string, string>>` | Maps `ModuleName → { ImportedSymbol → SourceModule }`. Drives `IMPORTS`-based parent lookup. |
+| `seedMap` | `Map<string, TreeBuildNode>` | Direct lookup of predefined standard seed nodes by name. |
+| `childIndex` | `Map<TreeBuildNode, Map<string, TreeBuildNode>>` | Per-parent child lookup keyed by `"name\|subid"`. Makes duplicate detection O(1) instead of scanning `children`. |
 
 ---
 
-## 3-Pass Approach
+## Parsing (`mib-parser.ts`)
 
-### Pass 1: Symbol Registration
-**Function**: `pass1_registerSymbols()` (`src/lib/mib-tree-builder.ts`)
+Before `MibTreeBuilder` ever runs, `parseMibModule()` extracts `IMPORTS`, object definitions, `TRAP-TYPE`s, and `TEXTUAL-CONVENTION`s from raw MIB text. Several real-world MIB quirks are handled at this stage:
 
-#### Purpose
-Extract symbols from all MIB modules and register them in maps. Parent-child relationships are not established at this stage.
+### 1. Pre-Scan Masking
+Real MIB files contain text that looks like object definitions inside comments, macros, and descriptions. Three passes clean the text before definition regexes run:
 
-#### Processing Flow
+1. **Strip comments** using RFC 2578 rules (`removeComments`).
+2. **Blank `<NAME> MACRO ::= BEGIN ... END` blocks:** Standard SMI modules define macros whose bodies contain the same keywords as real definitions. Without blanking, an `END` directly above `OBJECT-IDENTITY MACRO ::=` in `SNMPv2-SMI` was misread as an object named `END` stealing `zeroDotZero`'s `::= { 0 0 }`.
+3. **Blank string literal contents:** `DESCRIPTION` fields often quote example definitions (e.g., `IF-MIB` writes `noTest OBJECT IDENTIFIER ::= { 0 0 }` inside `ifTestType`'s description).
 
-1. **Seed Node Registration** (`registerSeedNodes()`)
-   - Create predefined standard SNMP hierarchy root nodes
-   - 23 seed nodes:
-     ```
-     iso (1)
-       └─ org (1.3)
-            └─ dod (1.3.6)
-                 └─ internet (1.3.6.1)
-                      ├─ directory (1.3.6.1.1)
-                      ├─ mgmt (1.3.6.1.2)
-                      │    └─ mib-2 (1.3.6.1.2.1)
-                      │         ├─ system (1.3.6.1.2.1.1)
-                      │         ├─ interfaces (1.3.6.1.2.1.2)
-                      │         ├─ at (1.3.6.1.2.1.3)
-                      │         ├─ ip (1.3.6.1.2.1.4)
-                      │         ├─ icmp (1.3.6.1.2.1.5)
-                      │         ├─ tcp (1.3.6.1.2.1.6)
-                      │         ├─ udp (1.3.6.1.2.1.7)
-                      │         ├─ egp (1.3.6.1.2.1.8)
-                      │         ├─ transmission (1.3.6.1.2.1.10)
-                      │         └─ snmp (1.3.6.1.2.1.11)
-                      ├─ experimental (1.3.6.1.3)
-                      ├─ private (1.3.6.1.4)
-                      │    └─ enterprises (1.3.6.1.4.1)
-                      ├─ security (1.3.6.1.5)
-                      ├─ snmpV2 (1.3.6.1.6)
-                      └─ mail (1.3.6.1.7)
-     ```
+Both blanking passes preserve character offsets and newlines, so matches in the masked copy map back to the original text by index to extract `DESCRIPTION`s accurately.
 
-2. **Module Symbol Registration**
-   ```typescript
-   // For each ParsedModule
-   for (const obj of module.objects) {
-     const node: TreeBuildNode = {
-       name: obj.name,
-       oid: '',                    // Not computed yet
-       parent: null,               // Not linked yet
-       parentName: obj.parentName, // Unresolved parent name
-       subid: obj.subid,           // Relative ID from parent
-       children: [],
-       // ... other fields
-     };
+### 2. Hyphenated Identifiers
+Standard MIB descriptors contain hyphens (`mib-2`, `member-body`). Matching with `\w+` stops at the hyphen (turning `mib-2` into `2`), so identifiers are matched with `[A-Za-z][\w-]*` throughout.
 
-     // Register in maps
-     symbolMap.set(`${moduleName}::${obj.name}`, node);
+### 3. `SYNTAX` Clauses
+A `SYNTAX` clause runs until the next clause keyword, but the value itself can contain keywords inside braces or constraints—for example `INTEGER { status(2), index(3) }` or `DisplayString (SIZE (0..255))`.
+- `extractSyntaxClause()` scans forward tracking brace, parenthesis, and string depth, ending only at a keyword at depth `0`.
+- The full clause is stored on the node; `parseSyntaxValues()` splits it into a base type plus enumerated values or a range when the details panel needs them (sharing logic with `TEXTUAL-CONVENTION` parsing).
 
-     if (!nameMap.has(obj.name)) {
-       nameMap.set(obj.name, []);
-     }
-     nameMap.get(obj.name)!.push(node);
-   }
-   ```
+### 4. Multi Sub-Identifier Assignments & Root Arcs
+- **Multi-subid assignments** like `::= { enterprises 30065 3011 7124 3282 }` are stored as an array (`subid: [30065, 3011, 7124, 3282]`) and joined directly onto the parent's OID in Pass 3.
+- **Root-arc anchors** may start at a numeric arc (`::= { 1 3 6 1 4 1 99999 }`) or a named-number root arc (`::= { iso(1) std(0) iso8802(8802) ... }`, common in IEEE 802.1 modules). `ccitt` (`0`) and `joint-iso-ccitt` (`2`) are seeded alongside `iso` (`1`) to support `zeroDotZero` (`0.0`) and other root arcs; roots with no children are hidden from the UI.
 
-3. **IMPORTS Information Registration**
-   ```typescript
-   // Example: IMPORTS { system FROM SNMPv2-MIB }
-   importsMap.set('CurrentModule', {
-     'system': 'SNMPv2-MIB'
-   });
-   ```
+### 5. SMIv1 `TRAP-TYPE`
+SMIv1 traps (RFC 1215) carry an `ENTERPRISE` node and a specific-trap number rather than an OID:
 
-#### Output
-- All symbols registered in maps
-- Parent-child relationships not established
-- OIDs not computed
-
----
-
-### Pass 2: Parent Linking
-**Function**: `pass2_linkParents()` (`src/lib/mib-tree-builder.ts`)
-
-#### Purpose
-Connect each node to its parent node to form a tree structure.
-
-#### Parent Resolution Algorithm
-
-The `resolveParent()` function searches for parents in the following order:
-
-```typescript
-function resolveParent(node: TreeBuildNode, moduleName: string): TreeBuildNode | null {
-  const parentName = node.parentName;
-  if (!parentName) return null;
-
-  // 1. Search within same module
-  const sameModuleKey = `${moduleName}::${parentName}`;
-  if (symbolMap.has(sameModuleKey)) {
-    return symbolMap.get(sameModuleKey)!;
-  }
-
-  // 2. Search using IMPORTS information
-  const imports = importsMap.get(moduleName);
-  const declaredSource = imports?.get(parentName);
-  if (declaredSource) {
-    const importedKey = `${declaredSource}::${parentName}`;
-    if (symbolMap.has(importedKey)) {
-      return symbolMap.get(importedKey)!;
-    }
-  }
-
-  // 3. Search seed nodes
-  const seed = seedMap.get(parentName);
-  if (seed) {
-    return seed;
-  }
-
-  // 3b. A root arc written as a number: `::= { 1 3 6 1 4 1 99999 }`
-  if (/^\d+$/.test(parentName)) {
-    const rootArc = seedNodes.find(seed => seed.oid === parentName);
-    if (rootArc) return rootArc;
-  }
-
-  // 4. Fallback: Cross-module search (only if name is unique), and only for
-  // an anchor the module did not say where to find
-  if (declaredSource) return null;
-
-  const candidates = nameMap.get(parentName);
-  if (candidates && candidates.length === 1) {
-    return candidates[0];
-  }
-
-  return null;  // Parent not found → orphan node
-}
-```
-
-Two details of that order matter:
-
-- **An `IMPORTS` clause is taken at its word.** When a module says its anchor
-  comes from `VENDOR-B-SMI`, a same-named node belonging to some other vendor's
-  module is not that anchor. Attaching to it would invent an OID — and present
-  it with the same confidence as a real one — while hiding the missing
-  dependency the module actually has. So step 4 is skipped for an anchor that
-  `IMPORTS` names, and the node becomes an orphan, which is what makes
-  `detectMissingMibs()` report the file it needs. The step 3 seed lookup comes
-  first on purpose: nearly every module imports `enterprises` and friends from
-  `SNMPv2-SMI` without loading it, and those resolve to seeds.
-- **A numeric parent is a root arc, not a name.** `foo OBJECT IDENTIFIER ::=
-  { 1 3 6 1 4 1 99999 }` is legal SMI: the first sub-identifier is the arc
-  `iso`, not an identifier to look up. Without step 3b the module - and every
-  definition hanging off it - resolved to nothing and left the tree silently.
-
-#### Duplicate Detection and Merging
-
-Two MIB files can define the same node — the same name at the same position
-under the same parent. Linking goes through `attachChild()`, which identifies a
-child by `"name|subid"` and consults the parent's `childIndex`:
-
-```typescript
-function attachChild(parent: TreeBuildNode, node: TreeBuildNode): void {
-  parent = resolveMerged(parent);            // both ends may have been merged
-  node = resolveMerged(node);                // away by an earlier duplicate
-  if (parent === node) return;
-
-  const index = getChildIndex(parent);       // built lazily, then kept in sync
-  const key = childKey(node);                // `${name}|${subid}`
-  const existing = index.get(key);
-
-  if (!existing) {
-    // New child - link it (its OID is computed in Pass 3)
-    parent.children.push(node);
-    index.set(key, node);
-    return;
-  }
-
-  if (existing === node) return;             // already linked
-
-  // Duplicate definition - record where this node went, then re-attach its
-  // children through the same method so a duplicated branch merges all the
-  // way down rather than stopping at the first collision
-  mergedInto.set(node, existing);
-  const grandChildren = node.children;
-  node.children = [];
-  for (const grandChild of grandChildren) attachChild(existing, grandChild);
-}
-```
-
-The duplicate node itself is dropped from the tree; whichever definition was
-linked first wins. The **files** are still compared afterwards and reported as
-conflicts — see [Conflict Detection](#conflict-detection).
-
-`mergedInto` is what keeps the merge from losing nodes. Pass 2 walks the symbol
-map in order, so a module's own objects are usually linked *after* its copy of
-a shared anchor has already been merged away — `resolveParent()` still finds
-that discarded duplicate in the symbol map, and without the redirection those
-objects would be linked under a node that is no longer part of the tree and
-vanish. In practice that meant a vendor MIB set where every file re-declares
-the same anchor kept only whichever file was loaded first.
-
-`childKey()` distinguishes an array subid from a numeric one (`a3011.7124` vs
-`n12`) so that `[1, 2]` and `12` cannot collide.
-
-#### Orphan Node Processing
-
-Nodes whose parent cannot be found are added to the `orphanNodes` array:
-
-```typescript
-if (!parent) {
-  orphanNodes.push(node);
-}
-```
-
----
-
-### Pass 2.5: Orphan Rescue
-**Function**: `pass2_5_rescueOrphans()` (`src/lib/mib-tree-builder.ts`)
-
-#### Purpose
-Retry orphan nodes to link them to parents when dependencies are loaded out of order.
-
-#### Processing Flow
-
-```typescript
-function pass2_5_rescueOrphans(): void {
-  const maxRetries = 3;
-  let retry = 0;
-
-  while (orphanNodes.length > 0 && retry < maxRetries) {
-    const currentOrphans = [...orphanNodes];
-    orphanNodes = [];
-
-    for (const node of currentOrphans) {
-      const parent = resolveParent(node);
-
-      if (parent) {
-        attachChild(parent, node);   // same linking/merging path as Pass 2
-      } else {
-        orphanNodes.push(node);      // still orphan, try again next round
-      }
-    }
-
-    retry++;
-  }
-}
-```
-
-#### Retry Strategy
-
-- At most 3 rounds, and it stops as soon as no orphans are left
-- Each round can only help if the previous one linked something, because a
-  rescued node may itself be the parent another orphan was waiting for — a
-  chain of *n* out-of-order definitions needs *n* rounds
-- Whatever is still orphaned after the last round is reported as a missing
-  dependency (see [Orphan Node Detection](#orphan-node-detection))
-
----
-
-### Pass 3: OID Computation
-**Function**: `pass3_computeOids()` (`src/lib/mib-tree-builder.ts`)
-
-#### Purpose
-Compute each node's absolute OID from its parent's OID and its own subid.
-
-#### Computation Algorithm
-
-```typescript
-function computeOidRecursive(node: TreeBuildNode, visited: Set<string>): void {
-  const key = `${node.moduleName}::${node.name}`;
-
-  // Detect circular references
-  if (visited.has(key)) {
-    console.error(`[Cycle Detected] ${key}`);
-    return;
-  }
-  visited.add(key);
-
-  for (const child of node.children) {
-    // Compute the child's OID from the parent's OID and the child's subid
-    if (node.oid && child.subid !== undefined) {
-      child.oid = Array.isArray(child.subid)
-        ? `${node.oid}.${child.subid.join('.')}`   // { aristaProducts 3011 7124 3282 }
-        : `${node.oid}.${child.subid}`;
-      child.parent = node.oid;                     // parent is stored as an OID
-    }
-
-    computeOidRecursive(child, visited);
-  }
-
-  // Remove on the way back up: `visited` tracks the current root-to-node path
-  visited.delete(key);
-}
-
-// Start only from seeds that are not themselves under another seed.
-// The seeds form a chain (iso -> org -> dod -> internet -> ...), so starting
-// from every one of them would recompute the same subtrees repeatedly.
-for (const seed of seedNodes) {
-  if (seed.parentName) continue;
-  computeOidRecursive(seed, new Set());
-}
-```
-
-Two details that are easy to get wrong here:
-
-- **`visited` holds the current path, not every node seen.** Entries are removed
-  as the recursion unwinds, so one set can be reused for the whole traversal.
-  Keeping entries after the fact would flag a legitimately shared node as a
-  cycle; copying the set for each child would allocate O(nodes x depth) sets.
-- **The traversal starts at `iso` only.** Everything reachable from a seed is
-  reachable from `iso`, because `buildSeedHierarchy()` links the seeds together.
-
-#### Multiple SubID Handling
-
-Some MIB definitions have multiple subids:
-
-```
--- Example: Enterprise OID
-myCompanyProduct OBJECT IDENTIFIER ::= { enterprises 30065 3011 7124 3282 }
-```
-
-In this case:
-```typescript
-node.subid = [30065, 3011, 7124, 3282];
-node.oid = "1.3.6.1.4.1.30065.3011.7124.3282";
-```
-
-#### What the definition scans are allowed to see
-
-Three passes over the text happen before any pattern looks for a definition,
-because a MIB file is full of text that looks like one:
-
-- **Comments go first** (RFC 2578 rules, see `removeComments`).
-- **`<NAME> MACRO ::= BEGIN ... END` blocks are blanked.** The SMI modules
-  everyone loads define the macros the other modules are written in, and their
-  bodies are full of the same keywords real definitions use. In SNMPv2-SMI the
-  `END` of one macro sits directly above `OBJECT-IDENTITY MACRO ::=`, which was
-  read as an object called `END` whose assignment was the `::= { 0 0 }` of
-  `zeroDotZero`, thirty lines further down — inventing one node and swallowing
-  another.
-- **String literals are blanked**, contents only. Descriptions quote example
-  definitions: IF-MIB explains `ifTestType` with
-  `noTest OBJECT IDENTIFIER ::= { 0 0 }` mid-sentence, and that example sits
-  *before* the object's own assignment, so the object took the example's parent
-  as its own.
-
-Both blanking passes preserve length and newlines, so a match found in the
-masked copy maps back to the real text by index — which is where the
-`DESCRIPTION` of a real definition is read from. Masking costs about a tenth of
-the parse.
-
-#### Names
-
-A descriptor may contain hyphens, and the standard tree is full of them:
-`mib-2`, `member-body`. Matching them with `\w+` stops at the hyphen, so `mib-2`
-was registered as a node called `2` and everything hanging off it became an
-orphan. Identifiers are matched with `[A-Za-z][\w-]*` throughout.
-
-#### The SYNTAX clause
-
-`SYNTAX` runs to the next clause keyword, but the type itself may contain one:
-an enumeration is free to label a value `status(2)` or `index(3)`, and a
-constraint is written with parentheses and dots — `DisplayString (SIZE (0..255))`.
-`extractSyntaxClause()` therefore scans forward tracking brace, parenthesis and
-string depth, and only ends the clause at a keyword found at depth 0. The whole
-clause is kept on the node, and `parseSyntaxValues()` splits it into a base type
-plus enumerated values or a range when the details panel needs them — the same
-split the `TEXTUAL-CONVENTION` reader uses.
-
-#### Root arcs
-
-An assignment may start at a root arc rather than at a node another module
-defines, in either spelling: `::= { 1 3 6 1 4 1 99999 }` or, as every IEEE
-module writes it, `::= { iso(1) std(0) iso8802(8802) ... }`. The first element
-is parsed for a name in the named-number form, and a purely numeric one is
-resolved against the seed with that OID.
-
-`ccitt` (0) and `joint-iso-ccitt` (2) are seeded alongside `iso` for this: the
-SMI puts `zeroDotZero`, the null identifier, at 0.0 and modules point at it.
-A root with no children is not rendered, so an ordinary MIB set still shows the
-single `iso` tree.
-
-#### SMIv1 TRAP-TYPE
-
-An SMIv1 trap (RFC 1215) carries no OID. It names the node it belongs to and a
-specific-trap number:
-
-```
+```asn1
 v1CardRemoved TRAP-TYPE
     ENTERPRISE  testV1Traps
     VARIABLES   { v1TrapReason }
@@ -524,9 +149,7 @@ v1CardRemoved TRAP-TYPE
     ::= 1
 ```
 
-`extractTrapTypes()` maps the pair the way RFC 3584 section 3.1 does — under the
-`ENTERPRISE` node, through a `0` sub-identifier — by reusing the multi-subid
-mechanism above:
+`extractTrapTypes()` maps these per RFC 3584 section 3.1 (`<enterprise>.0.<specific>`) using the multi-subid mechanism:
 
 ```typescript
 node.parentName = "testV1Traps";
@@ -534,520 +157,262 @@ node.subid = [0, 1];
 node.oid = "1.3.6.1.4.1.99999.5.0.1";
 ```
 
-So the trap resolves like any other node: if the module its `ENTERPRISE` comes
-from is not loaded, it becomes an orphan and that module is named in the missing
-dependency report. Its `VARIABLES` are kept on the node (as are the `OBJECTS` of
-an SMIv2 `NOTIFICATION-TYPE`) and shown in the details panel, and
-`isNotificationNode()` accepts `TRAP-TYPE`, so the "Traps Only" filter covers
-both notation styles.
-
-The one case that mapping does not cover is `ENTERPRISE snmp`, the six generic
-traps of RFC 1215, which RFC 3584 places at a fixed OID under `snmpTraps`
-instead. A module declaring its own traps never uses it, so those six would
-resolve to `snmp.0.<n>` rather than their standard OIDs.
-
-Each definition is sliced from its own header line to the next one, so a block
-missing its `::=` value cannot swallow the trap that follows it.
+- Traps resolve like any other node (missing `ENTERPRISE` modules trigger standard missing-dependency reports).
+- `VARIABLES` (and SMIv2 `OBJECTS`) are stored in `node.variables` for the details panel, and `isNotificationNode()` matches both `TRAP-TYPE` and `NOTIFICATION-TYPE` for the **Traps Only** filter.
+- Each trap block is sliced from its header line to the next header line so a malformed block missing `::=` cannot swallow the following trap.
+- *Limitation:* The six generic RFC 1215 traps (`ENTERPRISE snmp`) map to `snmp.0.<n>` rather than their fixed RFC 3584 `snmpTraps` OIDs.
 
 ---
 
-## OID Hierarchy Management
+## 3-Pass Tree Construction (`mib-tree-builder.ts`)
 
-### OID Utilities (`src/lib/oid-utils.ts`)
+### Pass 1: Symbol Registration (`pass1_registerSymbols`)
 
-One helper, used by the breadcrumb and by the auto-expand that reveals a
-selected node:
+Extracts every symbol from all parsed modules into lookup maps without linking parents or computing OIDs.
 
-```typescript
-// Get OID path - every prefix from the root to the OID itself
-getOidPath(oid: string): string[]
-// Example: "1.3.6.1.2" → ["1", "1.3", "1.3.6", "1.3.6.1", "1.3.6.1.2"]
-```
-
-Sub-identifiers are parsed with a leading dot tolerated, so `.1.3.6` and
-`1.3.6` give the same path.
+1. **Seed Nodes (`registerSeedNodes`):** Creates 23 predefined standard SNMP hierarchy nodes:
+   ```text
+   iso (1)
+     └─ org (1.3)
+          └─ dod (1.3.6)
+               └─ internet (1.3.6.1)
+                    ├─ directory (1.3.6.1.1)
+                    ├─ mgmt (1.3.6.1.2)
+                    │    └─ mib-2 (1.3.6.1.2.1)
+                    │         ├─ system (1.3.6.1.2.1.1)
+                    │         ├─ interfaces (1.3.6.1.2.1.2)
+                    │         ├─ at (1.3.6.1.2.1.3)
+                    │         ├─ ip (1.3.6.1.2.1.4)
+                    │         ├─ icmp (1.3.6.1.2.1.5)
+                    │         ├─ tcp (1.3.6.1.2.1.6)
+                    │         ├─ udp (1.3.6.1.2.1.7)
+                    │         ├─ egp (1.3.6.1.2.1.8)
+                    │         ├─ transmission (1.3.6.1.2.1.10)
+                    │         └─ snmp (1.3.6.1.2.1.11)
+                    ├─ experimental (1.3.6.1.3)
+                    ├─ private (1.3.6.1.4)
+                    │    └─ enterprises (1.3.6.1.4.1)
+                    ├─ security (1.3.6.1.5)
+                    ├─ snmpV2 (1.3.6.1.6)
+                    └─ mail (1.3.6.1.7)
+   ```
+   *(Plus `ccitt (0)` and `joint-iso-ccitt (2)` for root-arc anchors.)*
+2. **Module Symbols:** Wraps each `RawMibObject` in a `TreeBuildNode` and registers it in `symbolMap` (`"ModuleName::ObjectName"`) and `nameMap` (`"ObjectName"`).
+3. **`IMPORTS` Map:** Records each module's `Symbol → SourceModule` mappings in `importsMap`.
 
 ---
 
-## Error Handling
+### Pass 2: Parent Linking (`pass2_linkParents`)
 
-### Orphan Node Detection
-
-If nodes remain without parents after Pass 2.5, detect missing MIB dependencies:
+Connects each node to its parent using `resolveParent()` in strict priority order:
 
 ```typescript
-function detectMissingMibs(): Set<string> {
-  const missing = new Set<string>();
+function resolveParent(node: TreeBuildNode, moduleName: string): TreeBuildNode | null {
+  const parentName = node.parentName;
+  if (!parentName) return null;
 
-  for (const orphan of orphanNodes) {
-    const imports = importsMap.get(orphan.moduleName);
-    if (imports && imports.has(orphan.parentName!)) {
-      const requiredModule = imports.get(orphan.parentName!)!;
-      missing.add(requiredModule);
-    }
+  // 1. Same module
+  const sameModule = symbolMap.get(`${moduleName}::${parentName}`);
+  if (sameModule) return sameModule;
+
+  // 2. Declared IMPORTS source
+  const declaredSource = importsMap.get(moduleName)?.get(parentName);
+  if (declaredSource) {
+    const imported = symbolMap.get(`${declaredSource}::${parentName}`);
+    if (imported) return imported;
   }
 
-  return missing;
-}
-```
+  // 3. Standard seed nodes (by name)
+  const seed = seedMap.get(parentName);
+  if (seed) return seed;
 
-### Unresolved Anchors
-
-An orphan whose parent is named in `IMPORTS` is a missing dependency, and
-`buildTree()` raises it. An orphan whose parent nothing defines at all is a
-different thing: the module refers to an anchor no loaded file provides, and
-there is no file to ask for. Those nodes cannot be placed in any tree.
-
-They used to be dropped without a word — the file simply showed a smaller node
-count than it has definitions. `MibTreeBuilder.getUnresolvedOrphans()` now
-returns them once the rescue passes are done, and the rebuild attributes them to
-the file they came from: the file carries an error naming the anchors that were
-not found, and `RebuildResult.unplacedFiles` lists it so the UI can raise a
-warning. The rest of the file's definitions are still in the tree.
-
-### Error Notification
-
-```typescript
-if (orphanNodes.length > 0) {
-  const missingMibs = detectMissingMibs();
-  const missingList = Array.from(missingMibs).join(', ');
-
-  throw new Error(
-    `Cannot resolve all nodes. Missing MIB dependencies: ${missingList}. ` +
-    `Orphaned nodes: ${orphanNodes.length}`
-  );
-}
-```
-
-### Error Recovery
-
-`rebuildAllTrees()` in `useMibStorage.ts` catches errors and excludes problematic MIBs:
-
-```typescript
-async function rebuildAllTrees() {
-  let modules = await parseAllModules();
-  const excludedModules = new Set<string>();
-  const maxRetries = 10;
-
-  for (let retry = 0; retry < maxRetries; retry++) {
-    try {
-      const tree = builder.buildTree(modules);
-      // Success - save tree
-      await saveMergedTree(tree);
-      break;
-    } catch (error) {
-      // Extract missing MIB names from error message
-      const missingMibs = extractMissingMibsFromError(error.message);
-
-      if (missingMibs.length === 0) {
-        throw error; // Unrecoverable error
-      }
-
-      // Exclude modules depending on missing MIBs
-      for (const mod of modules) {
-        if (dependsOnMissingMib(mod, missingMibs)) {
-          excludedModules.add(mod.moduleName);
-          // Save error information
-          await saveMibError(mod.fileName, error.message);
-        }
-      }
-
-      // Remove excluded modules and retry
-      modules = modules.filter(m => !excludedModules.has(m.moduleName));
-    }
+  // 3b. Numeric root arc (e.g., ::= { 1 3 6 1 4 1 99999 })
+  if (/^\d+$/.test(parentName)) {
+    const rootArc = seedNodes.find(s => s.oid === parentName);
+    if (rootArc) return rootArc;
   }
+
+  // 4. Global fallback: only if unique AND not explicitly imported from elsewhere
+  if (declaredSource) return null;
+  const candidates = nameMap.get(parentName);
+  return candidates?.length === 1 ? candidates[0] : null;
 }
 ```
 
----
+Why this order matters:
+- **Respecting `IMPORTS`:** If a module explicitly imports an anchor from `VENDOR-B-SMI`, step 4 is skipped so it cannot accidentally attach to a same-named node in an unrelated vendor's module. Instead, it becomes an orphan and triggers a clear missing-dependency report. Step 3 runs first because modules commonly import `enterprises` from `SNMPv2-SMI` without loading `SNMPv2-SMI` itself.
+- **Numeric root arcs:** `::= { 1 3 6 ... }` starts with the numeric arc `1` (`iso`), handled by step 3b.
 
-## Tree Rebuild Process
-
-### Triggers
-
-Tree rebuild occurs on the following events:
-
-1. **MIB File Upload**
-2. **MIB File Deletion**
-3. **MIB File Import**
-4. **Manual Rebuild Button Click**
-
-### Complete Rebuild Flow
+#### Duplicate Detection & Merging (`attachChild`)
+Two files may define the same node (same `name` and `subid` under the same parent). `attachChild()` uses the parent's `childIndex` keyed by `childKey(node)` (distinguishing array subids `a3011.7124` from numeric subids `n12`):
 
 ```typescript
-async function rebuildAllTrees(): Promise<void> {
-  // 1. Load all MIBs from IndexedDB
-  const allMibs = await loadAllMibs();
+function attachChild(parent: TreeBuildNode, node: TreeBuildNode): void {
+  parent = resolveMerged(parent);
+  node = resolveMerged(node);
+  if (parent === node) return;
 
-  if (allMibs.length === 0) {
-    await clearMergedTree();
+  const index = getChildIndex(parent);
+  const key = childKey(node);
+  const existing = index.get(key);
+
+  if (!existing) {
+    parent.children.push(node);
+    index.set(key, node);
     return;
   }
+  if (existing === node) return;
 
-  // 2. Parse each MIB to ParsedModule format
-  const modules: ParsedModule[] = [];
-  for (const mib of allMibs) {
-    try {
-      const parsed = parseMibModule(mib.content, mib.fileName);
-      modules.push(parsed);
-    } catch (error) {
-      console.error(`Failed to parse ${mib.fileName}:`, error);
-    }
-  }
-
-  // 3. Build tree with MibTreeBuilder (with retry mechanism)
-  let tree: MibNode[] = [];
-  const builder = new MibTreeBuilder();
-  const excludedModules = new Set<string>();
-
-  for (let retry = 0; retry < 10; retry++) {
-    try {
-      tree = builder.buildTree(modules);
-      break; // Success
-    } catch (error) {
-      // Detect missing MIBs
-      const missingMibs = extractMissingMibsFromError(error.message);
-      if (missingMibs.length === 0) {
-        throw error;
-      }
-
-      // Exclude dependent modules
-      for (const mod of modules) {
-        if (dependsOnMissingMib(mod, missingMibs)) {
-          excludedModules.add(mod.moduleName);
-        }
-      }
-
-      modules = modules.filter(m => !excludedModules.has(m.moduleName));
-    }
-  }
-
-  // 4. Flatten tree
-  const flatTree = flattenTree(tree);
-
-  // 5. Save merged tree to IndexedDB
-  await saveMergedTree(tree);
-
-  // 6. Calculate node count per file
-  const nodeCounts = calculateNodeCountsByFile(flatTree);
-
-  // 7. Detect conflicts in duplicate module names
-  const conflicts = detectConflicts(allMibs, flatTree);
-
-  // 8. Save metadata for every MIB (nodeCount, conflicts, errors) in ONE
-  //    transaction. One saveMib() per file means one transaction per file.
-  await saveMibs(changedMibs);
+  // Merge duplicate: redirect future references and re-attach children recursively
+  mergedInto.set(node, existing);
+  const grandChildren = node.children;
+  node.children = [];
+  for (const grandChild of grandChildren) attachChild(existing, grandChild);
 }
 ```
 
-The records are mutated in place as the rebuild goes along, collected in a
-`dirtyMibs` set, and written once at the end — including on the early-return
-path where the build failed completely, so error state is never lost.
+- Whichever definition is linked first survives in the tree; the files are still compared afterward for conflict reporting.
+- `mergedInto` ensures that subsequent objects referencing a merged-away anchor in `symbolMap` are redirected to the surviving node instead of disappearing into a detached subtree.
+
+Nodes whose parent cannot be found are added to `orphanNodes`.
+
+---
+
+### Pass 2.5: Orphan Rescue (`pass2_5_rescueOrphans`)
+
+Retries linking nodes in `orphanNodes` for up to **3 rounds** (stopping early once `orphanNodes` is empty). Each round re-runs `resolveParent()` and `attachChild()`, handling chains of out-of-order definitions where a newly rescued node becomes the parent for another orphan.
+
+---
+
+### Pass 3: OID Computation (`pass3_computeOids`)
+
+Computes absolute OIDs top-down from root seed nodes:
+
+```typescript
+function computeOidRecursive(node: TreeBuildNode, visited: Set<string>): void {
+  const key = `${node.moduleName}::${node.name}`;
+  if (visited.has(key)) {
+    console.error('[Cycle Detected]', key);
+    return;
+  }
+  visited.add(key);
+
+  for (const child of node.children) {
+    if (node.oid && child.subid !== undefined) {
+      child.oid = Array.isArray(child.subid)
+        ? `${node.oid}.${child.subid.join('.')}`
+        : `${node.oid}.${child.subid}`;
+      child.parent = node.oid;
+    }
+    computeOidRecursive(child, visited);
+  }
+
+  visited.delete(key); // Track current root-to-node path only
+}
+
+for (const seed of seedNodes) {
+  if (seed.parentName) continue; // Start only from top-level roots
+  computeOidRecursive(seed, new Set());
+}
+```
+
+- **Backtracking `visited`:** Removing `key` on unwind lets one `Set` track the active ancestor path without false-positive cycle reports or O(nodes × depth) set allocations.
+- **Root-only starts:** Because seed nodes form a chain (`iso → org → dod → ...`), starting only from parentless roots ensures every subtree is computed exactly once.
+
+### OID Path Helper (`src/lib/oid-utils.ts`)
+`getOidPath(oid)` returns every prefix from the root to the given OID (tolerating a leading dot), used by breadcrumbs and auto-expansion:
+```typescript
+getOidPath("1.3.6.1.2") // → ["1", "1.3", "1.3.6", "1.3.6.1", "1.3.6.1.2"]
+```
+
+---
+
+## Error Handling & Recovery
+
+### Missing Dependencies vs. Unresolved Anchors
+
+After Pass 2.5, remaining orphans fall into two categories:
+
+1. **Missing dependencies (`detectMissingMibs`):** An orphan whose `parentName` is listed in its module's `IMPORTS`. `buildTree()` throws an error naming the missing modules (`Missing MIB dependencies: ...`).
+2. **Unresolved anchors (`getUnresolvedOrphans`):** An orphan whose `parentName` is neither defined anywhere nor listed in `IMPORTS`. These cannot be placed in the tree; `rebuild.ts` attributes them to their source files (`RebuildResult.unplacedFiles`) so the UI surfaces a warning while keeping the rest of the file's definitions in the tree.
+
+### Automatic Exclusion & Retry (`rebuild.ts`)
+
+When `buildTree()` throws a missing-dependency error, `runRebuild()` catches it, excludes every module that depends on the missing MIBs, records the error on those files, and retries with a fresh `MibTreeBuilder` instance (up to **10 retries**). A single broken or incomplete MIB never blocks the rest of the collection.
+
+---
+
+## Rebuild Pipeline & Conflict Detection
+
+### Triggers
+A rebuild runs on:
+1. MIB file upload (once at the end of a multi-file batch)
+2. MIB file deletion
+3. JSON import
+4. Manual **Rebuild Tree** button click
+
+### Pipeline Steps (`src/lib/rebuild.ts`)
+1. **Resolve modules:** Reuse unchanged `ParsedModule`s from the session-scoped `parseCache`; parse only new or modified files.
+2. **Build tree:** Run `MibTreeBuilder.buildTree(modules)` with the missing-dependency exclusion/retry loop.
+3. **Bookkeeping:** Flatten the tree to compute per-file node counts, record unplaced-anchor warnings, and run conflict detection.
+4. **Publish & persist:** Post `{ tree, textualConventions, files }` back to the main thread so React renders immediately, then persist `mergedTree` to IndexedDB in the worker while the main thread writes changed MIB metadata in a single batched `saveMibs()` transaction.
 
 ### Conflict Detection
 
-Two kinds are reported, both as entries in a file's `conflicts` array so the
-notification panel can pair the files up:
+Two kinds of conflicts are reported in each file's `conflicts` array:
 
-1. **Two files declaring the same module.** Their objects are compared field by
-   field - the case below.
-2. **Two different modules landing on the same OID.** A node is identified by
-   its OID, so a pair like this expands and highlights together in the tree;
-   until they were compared, nothing said why. The usual cause is a node renamed
-   between two revisions of a vendor MIB, with both revisions loaded. The
-   entry's difference is the `name` field, and both files are told about it.
-   Nodes with the same name *and* OID are not a collision: those are one
-   definition, merged in Pass 2.
-
-When files with the same `moduleName` exist, compare each object field:
-
-```typescript
-function detectConflicts(mibs: Mib[], flatTree: MibNode[]): Map<string, Conflict[]> {
-  const moduleNameMap = new Map<string, Mib[]>();
-
-  // Group by same module name
-  for (const mib of mibs) {
-    if (!moduleNameMap.has(mib.moduleName)) {
-      moduleNameMap.set(mib.moduleName, []);
-    }
-    moduleNameMap.get(mib.moduleName)!.push(mib);
-  }
-
-  const conflictMap = new Map<string, Conflict[]>();
-
-  for (const [moduleName, mibList] of moduleNameMap) {
-    if (mibList.length <= 1) continue; // No conflict
-
-    // Compare each pair
-    for (let i = 0; i < mibList.length; i++) {
-      for (let j = i + 1; j < mibList.length; j++) {
-        const mib1 = mibList[i];
-        const mib2 = mibList[j];
-
-        // Get nodes from tree for both MIBs
-        const nodes1 = flatTree.filter(n => n.fileName === mib1.fileName);
-        const nodes2 = flatTree.filter(n => n.fileName === mib2.fileName);
-
-        // Match by name
-        for (const n1 of nodes1) {
-          const n2 = nodes2.find(n => n.name === n1.name);
-          if (!n2) continue;
-
-          // Compare fields
-          const differences: FieldDifference[] = [];
-
-          if (n1.type !== n2.type) {
-            differences.push({
-              field: 'type',
-              oldValue: n1.type,
-              newValue: n2.type
-            });
-          }
-
-          if (n1.syntax !== n2.syntax) {
-            differences.push({
-              field: 'syntax',
-              oldValue: n1.syntax,
-              newValue: n2.syntax
-            });
-          }
-
-          // ... other fields similarly
-
-          if (differences.length > 0) {
-            if (!conflictMap.has(mib1.fileName)) {
-              conflictMap.set(mib1.fileName, []);
-            }
-            conflictMap.get(mib1.fileName)!.push({
-              objectName: n1.name,
-              conflictingFile: mib2.fileName,
-              differences
-            });
-          }
-        }
-      }
-    }
-  }
-
-  return conflictMap;
-}
-```
+1. **Same module name across multiple files:** Objects with the same name are compared field by field (`type`, `syntax`, `access`, `status`, `description`). Any differences are attached to both files for the conflict diff dialog.
+2. **Same OID across different modules:** Because nodes are identified by OID, two differently named objects landing on the same OID (commonly caused by loading two revisions of a vendor MIB where an object was renamed) are flagged with a `name` difference. *(Objects with the same name **and** OID are merged in Pass 2 and are not collisions.)*
 
 ---
 
-## Complete Flow Diagram
+## End-to-End Flow Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                       MIB File Upload                           │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    parseMibModule(content)                       │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ • Extract IMPORTS clause                                 │   │
-│  │ • Extract OID assignments (unresolved: parentName+subid) │   │
-│  │ • Extract OBJECT-TYPE definitions                        │   │
-│  │ • Extract TEXTUAL-CONVENTION definitions                 │   │
-│  │ → Return ParsedModule                                    │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              MibTreeBuilder.buildTree(modules[])                 │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Pass 1: registerSeedNodes() + pass1_registerSymbols()          │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Create seed nodes:                                        │   │
-│  │   iso, org, dod, internet, mgmt, mib-2, system, ...      │   │
-│  │                                                           │   │
-│  │ Register all symbols in three maps:                      │   │
-│  │   • symbolMap: "ModuleName::ObjectName" → Node           │   │
-│  │   • nameMap: "ObjectName" → Node[]                       │   │
-│  │   • importsMap: Module → {Symbol → SourceModule}         │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Pass 2: pass2_linkParents()                                    │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ For each node:                                            │   │
-│  │   1. Search for parent with resolveParent()              │   │
-│  │      ├─ Search within same module                        │   │
-│  │      ├─ Use IMPORTS information                          │   │
-│  │      ├─ Search seed nodes                                │   │
-│  │      └─ Fallback: Cross-module search                    │   │
-│  │                                                           │   │
-│  │   2. If parent found:                                    │   │
-│  │      • Check for duplicates (name + subid)               │   │
-│  │      • Merge if duplicate, add if new                    │   │
-│  │                                                           │   │
-│  │   3. If parent not found → Add to orphanNodes[]          │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Pass 2.5: pass2_5_rescueOrphans() [Max 3 retries]             │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ For each orphan node:                                     │   │
-│  │   • Retry resolveParent()                                │   │
-│  │   • Link if parent found                                 │   │
-│  │   • Remain orphan if not found                           │   │
-│  │                                                           │   │
-│  │ Exit early if no progress                                │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Check for unresolved orphan nodes                              │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ If orphans remain:                                        │   │
-│  │   • Run detectMissingMibs()                              │   │
-│  │   • Throw error: "Missing MIB dependencies: ..."         │   │
-│  │                                                           │   │
-│  │ Error is caught in rebuildAllTrees()                     │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Pass 3: pass3_computeOids()                                    │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ From each seed node:                                      │   │
-│  │   • Call computeOidRecursive()                           │   │
-│  │                                                           │   │
-│  │ For each child node:                                      │   │
-│  │   child.oid = parent.oid + "." + child.subid             │   │
-│  │                                                           │   │
-│  │ For multiple SubIDs:                                      │   │
-│  │   child.oid = parent.oid + "." + subid.join('.')         │   │
-│  │                                                           │   │
-│  │ Detect circular references: use visited set              │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  buildTreeFromSeeds()                                           │
-│  • Return tree rooted at "iso" node                             │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  saveMergedTree(tree) → IndexedDB                               │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  calculateNodeCountsByFile(flatTree)                            │
-│  • Count nodes per file                                         │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  detectConflicts(allMibs, flatTree)                             │
-│  • Compare objects in files with same moduleName                │
-│  • Record field differences                                     │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  saveMib() - Save metadata to each MIB                          │
-│  • nodeCount                                                    │
-│  • conflicts[]                                                  │
-│  • error (if applicable)                                        │
-└─────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  MibTreeView renders tree                                       │
-│  • Recursively display with TreeNode components                 │
-└─────────────────────────────────────────────────────────────────┘
+```text
+MIB File Upload / Delete / Rebuild
+        │
+        ▼
+[Main Thread] getAllMibs() → post uncached contents to Rebuild Worker
+        │
+        ▼
+[Worker] parseMibModule() (reusing session parseCache)
+        │  • Strip comments, mask MACROs & strings
+        │  • Extract IMPORTS, objects, TRAP-TYPEs, TEXTUAL-CONVENTIONs
+        ▼
+[Worker] MibTreeBuilder.buildTree(modules)
+        ├─ Pass 1:   Register 23+ seed nodes & all module symbols into maps
+        ├─ Pass 2:   Resolve parents (same module → IMPORTS → seeds → unique global)
+        │            Merge duplicates via childIndex + mergedInto
+        ├─ Pass 2.5: Rescue orphans (up to 3 rounds)
+        ├─ Check:    Missing imports? → exclude dependents & retry (up to 10×)
+        │            Unresolved anchors? → record against source file
+        └─ Pass 3:   Compute absolute OIDs top-down from root seeds (cycle-safe)
+        │
+        ▼
+[Worker] Per-file bookkeeping (node counts, conflicts, errors)
+        │
+        ├──────────────────────────────┐
+        ▼                              ▼
+[Main Thread]                   [Worker]
+  • Publish state to React        • saveMergedTree() → IndexedDB
+  • MibTreeView renders           • post { persisted }
+    virtualized window
+  • saveMibs(changed) (1 tx)
 ```
 
 ---
 
 ## Key Design Decisions
 
-### 1. 3-Pass Approach
-
-**Rationale**: Separating parsing, linking, and OID resolution makes each stage's responsibility clear and debugging easier.
-
-**Benefits**:
-- Separate symbol registration and linking → can handle forward references
-- Compute OID after parent linking → compute after parent OID is determined
-- Each pass can be tested independently
-
-### 2. Seed Nodes
-
-**Rationale**: Predefining standard SNMP hierarchy roots ensures all MIBs are anchored to the base hierarchy.
-
-**Benefits**:
-- Always guarantee valid tree structure
-- Ensure complete OID path from iso(1)
-- Can display base tree even without custom MIBs
-
-### 3. Symbol Maps (3 types)
-
-**Rationale**: To efficiently support different search strategies.
-
-**symbolMap**: O(1) resolution of unique references within modules
-**nameMap**: Enables cross-module search and fallback
-**importsMap**: Accurate reference resolution based on IMPORTS clause
-
-### 4. Orphan Rescue Mechanism
-
-**Rationale**: MIBs may be loaded in arbitrary order, causing dependencies to be out of sequence.
-
-**Benefits**:
-- Not dependent on loading order
-- Can handle complex dependency graphs
-- Prevents infinite loops
-
-### 5. Duplicate Detection and Merging
-
-**Rationale**: Multiple MIB files may define the same object (different versions or cross-references).
-
-**Approach**:
-- Detect duplicates by name + subid
-- Merge children to integrate information
-- Display conflicts in UI
-
-### 6. Error Propagation and Exclusion
-
-**Rationale**: One MIB's error should not prevent the entire tree from being built.
-
-**Strategy**:
-- Detect missing MIBs
-- Exclude dependent modules
-- Retry up to 10 times
-- Save error information in MIB metadata
-
-### 7. Tree Persistence
-
-**Rationale**: Rebuilding large trees is expensive.
-
-**Implementation**:
-- Save complete tree to IndexedDB
-- Load tree on app startup
-- Rebuild only on changes
-
-### 8. Conflict Tracking
-
-**Rationale**: Users may upload different versions of the same module.
-
-**Features**:
-- Detect field-level differences
-- Display conflicts in UI
-- Show old and new values
+| Decision | Rationale |
+|---|---|
+| **3-pass separation** | Decoupling registration, linking, and OID computation naturally handles forward references and keeps each stage independently testable. |
+| **Predefined seed nodes** | Guarantees a valid standard SNMP root hierarchy (`iso(1)` down to `enterprises` and `mib-2`) even when `SNMPv2-SMI` isn't uploaded. |
+| **Multi-map indexing** | `symbolMap`, `nameMap`, `importsMap`, and `childIndex` keep parent lookup and duplicate detection O(1). |
+| **Orphan rescue loop** | Makes the builder independent of file upload order while bounding retries to prevent infinite loops. |
+| **Error isolation** | Excluding modules with missing dependencies ensures one incomplete file never prevents viewing the rest of the MIBs. |
+| **Worker + in-memory parse cache** | Offloads parsing, tree building, and IndexedDB tree writes off the main thread so the UI stays responsive. |
+| **Persisted merged tree** | Avoids rebuilding on page reload; startup renders directly from IndexedDB. |
 
 ---
 
@@ -1055,171 +420,67 @@ function detectConflicts(mibs: Mib[], flatTree: MibNode[]): Map<string, Conflict
 
 | Function | File | Responsibility |
 |---|---|---|
-| `MibTreeBuilder.buildTree()` | `mib-tree-builder.ts` | Orchestrate the 3-pass process |
-| `pass1_registerSymbols()` | `mib-tree-builder.ts` | Register all symbols |
-| `pass2_linkParents()` | `mib-tree-builder.ts` | Link nodes to parents |
-| `pass2_5_rescueOrphans()` | `mib-tree-builder.ts` | Retry unresolved parents |
-| `pass3_computeOids()` | `mib-tree-builder.ts` | Calculate absolute OIDs |
-| `resolveParent()` | `mib-tree-builder.ts` | Find a parent, with fallbacks |
-| `attachChild()` | `mib-tree-builder.ts` | Link a child, merging duplicates |
-| `resolveMerged()` | `mib-tree-builder.ts` | Follow a merged-away node to its survivor |
-| `detectMissingMibs()` | `mib-tree-builder.ts` | Name the MIBs the orphans need |
-| `registerSeedNodes()` | `mib-tree-builder.ts` | Create the standard SNMP hierarchy |
 | `parseMibModule()` | `mib-parser.ts` | Parse MIB text into a `ParsedModule` |
-| `validateMibContent()` | `mib-parser.ts` | Reject files that are not MIBs |
-| `filterTreeByQuery()` | `mib-parser.ts` | Filter the tree to search matches |
-| `filterTreeToNotifications()` | `mib-parser.ts` | Filter the tree to `NOTIFICATION-TYPE` / `TRAP-TYPE` nodes |
-| `extractTrapTypes()` | `mib-parser.ts` | Map SMIv1 `TRAP-TYPE` definitions onto `<enterprise>.0.<specific>` |
-| `extractSyntaxClause()` | `mib-parser.ts` | Read a whole `SYNTAX` clause, braces and constraints included |
-| `parseSyntaxValues()` | `mib-parser.ts` | Split a `SYNTAX` clause into base type, enumerated values and range |
-| `rebuildAllTrees()` | `useMibStorage.ts` | Full rebuild, with error handling |
+| `validateMibContent()` | `mib-parser.ts` | Reject non-MIB files on upload |
+| `extractTrapTypes()` | `mib-parser.ts` | Map SMIv1 `TRAP-TYPE` to `<enterprise>.0.<specific>` |
+| `extractSyntaxClause()` | `mib-parser.ts` | Read a full `SYNTAX` clause across nested braces/constraints |
+| `parseSyntaxValues()` | `mib-parser.ts` | Split `SYNTAX` into base type, enums, and range |
+| `filterTreeByQuery()` | `mib-parser.ts` | Filter tree to search matches and ancestors |
+| `filterTreeToNotifications()` | `mib-parser.ts` | Filter tree to `NOTIFICATION-TYPE` / `TRAP-TYPE` nodes |
+| `MibTreeBuilder.buildTree()` | `mib-tree-builder.ts` | Orchestrate the 3-pass build |
+| `registerSeedNodes()` | `mib-tree-builder.ts` | Seed the standard SNMP hierarchy |
+| `pass1_registerSymbols()` | `mib-tree-builder.ts` | Register all module symbols into maps |
+| `pass2_linkParents()` | `mib-tree-builder.ts` | Link nodes to parents and collect orphans |
+| `pass2_5_rescueOrphans()` | `mib-tree-builder.ts` | Retry unresolved orphans (up to 3 rounds) |
+| `pass3_computeOids()` | `mib-tree-builder.ts` | Compute absolute OIDs from root seeds |
+| `resolveParent()` | `mib-tree-builder.ts` | Resolve a node's parent with priority fallbacks |
+| `attachChild()` / `resolveMerged()` | `mib-tree-builder.ts` | Link children and merge duplicate definitions |
+| `detectMissingMibs()` | `mib-tree-builder.ts` | Identify unloaded modules referenced by orphans |
+| `runRebuild()` | `rebuild.ts` | End-to-end rebuild, caching, retry, and bookkeeping |
+| `rebuildAllTrees()` | `useMibStorage.ts` | Trigger worker rebuild and publish React state |
 
 ---
 
-## Performance Considerations
+## Complexity & Performance
 
-Measured figures, profiling instructions and the full list of optimizations live
-in [PERFORMANCE_EN.md](./PERFORMANCE_EN.md). In summary:
+For measured timings and profiling instructions, see [PERFORMANCE_EN.md](./PERFORMANCE_EN.md).
 
 ### Time Complexity
 
 | Stage | Complexity | Notes |
 |---|---|---|
-| Pass 1 | O(n) | n = total object count |
-| Pass 2 | O(n) | map lookups for both parent resolution and duplicate detection |
-| Pass 2.5 | O(orphans x rounds) | at most 3 rounds |
-| Pass 3 | O(n) | each node visited once, from `iso` only |
-| `convertToMibNode` | O(n) | allocates the output tree |
-
-Parsing the files, not building the tree, dominates a rebuild: it is the only
-stage that has to touch every byte.
+| Pass 1 | `O(n)` | `n` = total object count |
+| Pass 2 | `O(n)` | O(1) map lookups for parent resolution and duplicate detection |
+| Pass 2.5 | `O(orphans × rounds)` | At most 3 rounds |
+| Pass 3 | `O(n)` | Each node visited once from root seeds |
+| `convertToMibNode` | `O(n)` | Allocates the final output tree |
 
 ### Space Complexity
 
-`symbolMap`, `nameMap` and `childIndex` are each O(n), and the output tree is a
-second full copy of the nodes. Overall O(n), with a constant factor of roughly
-"three maps plus two trees".
-
-### Optimizations Applied
-
-1. **Map-based resolution** — parent lookup and duplicate detection are both
-   O(1); neither scans an array.
-2. **Single-traversal Pass 3** — only root seeds are traversed, and the
-   cycle-detection set is reused with backtracking rather than copied per child.
-3. **Early exit in orphan rescue** — stops as soon as no orphans remain.
-4. **Batched persistence** — one IndexedDB transaction per rebuild, on a cached
-   connection.
-5. **Tree persistence** — the built tree is stored, so a page reload renders it
-   without rebuilding.
+`O(n)` overall—roughly three lookup maps (`symbolMap`, `nameMap`, `childIndex`) plus two tree representations (working `TreeBuildNode` tree and output `MibNode` tree).
 
 ---
 
 ## Troubleshooting Guide
 
-### Issue: Some nodes don't appear in tree
+### Some nodes don't appear in the tree
+- **Cause:** Orphan nodes whose parent was not found (missing `IMPORTS` module or undefined anchor).
+- **Check:** Inspect the notification panel for missing-dependency or unplaced-anchor warnings, or check the browser console for orphan logs.
+- **Fix:** Upload the required dependency MIB and verify that the parent object is defined and spelled consistently in `IMPORTS`.
 
-**Cause**: Orphan nodes - parent not found
+### Conflict badge appears on MIBs
+- **Cause:** Two files define the same module differently, or two different modules assign different names to the same OID.
+- **Check:** Open the conflict banner to inspect the field-by-field diff.
+- **Fix:** Delete the older or redundant revision, or keep both if intentional.
 
-**Diagnosis**:
-1. Search browser console for "orphan"
-2. Check error message for missing MIBs
+### OIDs are missing or incorrect
+- **Cause:** A parent node's OID could not be resolved, or a circular reference exists.
+- **Check:** Verify the ancestor chain back to a seed node (`iso`, `enterprises`, `mib-2`, etc.) and check the console for `[Cycle Detected]` messages.
+- **Fix:** Correct the parent reference and click **Rebuild Tree**.
 
-**Solution**:
-1. Upload required MIB files
-2. Verify IMPORTS clause is correct
-3. Verify parent object is defined
-
-### Issue: Duplicate nodes appear
-
-**Cause**: Multiple MIBs contain the same object with different definitions
-
-**Diagnosis**:
-1. Check for "Conflicts" badge in MIB list
-2. View conflict details
-
-**Solution**:
-1. Delete older version MIBs
-2. Keep only one authoritative MIB
-3. Accept both if needed and live with conflicts
-
-### Issue: OIDs not computed correctly
-
-**Cause**: Parent OID is undefined or invalid
-
-**Diagnosis**:
-1. Check parent node's OID
-2. Verify path to seed nodes
-
-**Solution**:
-1. Rebuild tree
-2. Verify parent node is correctly defined
-3. Check for circular references
-
-### Issue: Tree building is slow
-
-**Cause**: Every added or removed file rebuilds the whole collection, and the
-rebuild re-parses every stored MIB.
-
-**Notes**:
-1. A bulk upload rebuilds once at the end, not once per file — if you are seeing
-   one rebuild per file, `skipReload` is not being passed through
-2. Delete MIBs you are not using; the cost scales with the total stored bytes
-3. The built tree is cached in IndexedDB, so a page reload does not rebuild
-4. To profile, see [PERFORMANCE_EN.md](./PERFORMANCE_EN.md)
-
----
-
-## Future Extension Ideas
-
-### 1. Incremental Updates
-
-Currently, full rebuild is performed when adding/deleting MIBs. Incremental updates would rebuild only affected subtrees.
-
-### 2. Off the Main Thread
-
-Parsing dominates a rebuild and currently blocks the UI for its duration.
-Running `parseMibModule` for each file in a Web Worker would keep the app
-responsive even without incremental updates. (Pass 1 itself is not the
-bottleneck and shares mutable maps, so it is a poor parallelization target.)
-
-### 3. Tree Validation
-
-Post-build tree integrity checks:
-- Are all OIDs unique?
-- Are all nodes reachable?
-- Are there circular references?
-
-### 4. Improved Cache Strategy
-
-- Cache parsed modules, so a rebuild re-parses only what changed
-- Avoid parsing an uploaded file twice (once for its module name, once in the
-  rebuild)
-- Incremental tree updates
-
-### 5. Better Error Recovery
-
-- More detailed error messages
-- Automatic fix suggestions
-- Partial tree building (excluding error sections)
-
----
-
-## Conclusion
-
-The MIB tree construction system is a robust solution for building a unified OID hierarchy from multiple MIB modules while handling complex dependencies, duplicates, and errors.
-
-**Key Strengths**:
-- ✅ Modular 3-pass architecture
-- ✅ Comprehensive error handling
-- ✅ Map-based reference resolution and duplicate detection, both O(1)
-- ✅ Not dependent on loading order
-- ✅ Duplicate and conflict detection
-- ✅ Linear in the number of objects
-
-**Limitations**:
-- ⚠️ Requires a full rebuild (no incremental updates)
-- ⚠️ Circular dependencies are detected and logged, not auto-resolved
-- ⚠️ Runs on the main thread, so a large rebuild blocks the UI
-- ⚠️ In-memory processing (limits for very large MIB sets)
-
-This documentation should help understand the MIB tree construction logic and support future maintenance and extensions.
+### Rebuilds feel slow on very large collections
+- **Cause:** Every mutation still rebuilds and rewrites the full merged tree in IndexedDB (even though unchanged files hit the parse cache and work runs in a Web Worker).
+- **Notes:**
+  - Bulk uploads rebuild once at the end—if you see one rebuild per file, verify `skipReload` is passed through.
+  - Remove unused MIBs to reduce total tree size.
+  - See [PERFORMANCE_EN.md](./PERFORMANCE_EN.md) for profiling steps.

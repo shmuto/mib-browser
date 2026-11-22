@@ -1,61 +1,56 @@
 # Performance
 
-Where the time goes when a large MIB collection is loaded, what has already been
-optimized, and how to measure before changing any of it.
+Where time goes when loading large MIB collections, what has already been optimized, the invariants that keep it fast, and how to measure before making changes.
 
 ## Table of Contents
 
-1. [The three costs](#the-three-costs)
-2. [Measuring](#measuring)
-3. [Current numbers](#current-numbers)
-4. [What was optimized and why](#what-was-optimized-and-why)
-5. [Invariants worth keeping](#invariants-worth-keeping)
-6. [Known remaining costs](#known-remaining-costs)
+1. [The Three Costs](#the-three-costs)
+2. [How to Measure](#how-to-measure)
+3. [Current Benchmarks](#current-benchmarks)
+4. [Completed Optimizations](#completed-optimizations)
+5. [Invariants Worth Keeping](#invariants-worth-keeping)
+6. [Known Remaining Costs](#known-remaining-costs)
 
 ---
 
-## The three costs
+## The Three Costs
 
-Work in this app falls into three groups, and they fail in different ways:
+Performance work in this app falls into three categories with distinct scaling characteristics and failure modes:
 
-| | Runs when | Scales with | Symptom when slow |
+| Category | Trigger | Scales With | Symptom When Slow |
 |---|---|---|---|
-| **Rebuild** | any file added or removed | total size of *all* stored MIBs | the app freezes for a moment after upload or delete |
-| **Render** | expand, collapse, scroll, select | number of *visible* rows | the tree stutters, expanding everything hangs the tab |
-| **Search** | every keystroke | size of the merged tree | typing lags behind the keyboard |
+| **Rebuild** | Any file added or removed | Total size of *all* stored MIBs | App stalls after upload or delete |
+| **Render** | Expand, collapse, scroll, select | Number of *visible* rows | Tree stutters; Expand All hangs the tab |
+| **Search** | Every keystroke | Size of the merged tree | Typing lags behind the keyboard |
 
-The rebuild is the one that scales with the collection rather than with what is
-on screen, so it is the one that limits how many MIBs can be loaded at all.
+Because **Rebuild** scales with the entire collection rather than what is visible on screen, it is the primary factor limiting how many MIBs can be loaded.
 
 ---
 
-## Measuring
+## How to Measure
 
-### In the browser
+### In the Browser
 
-Generate a corpus and load it:
+1. Generate a synthetic corpus:
 
 ```bash
 node test-data/generate-large-corpus.mjs 60 200     # ~12k nodes, ~2 MB
 node test-data/generate-large-corpus.mjs 400 150    # ~63k nodes, ~14 MB
 ```
 
-Then, with the Performance panel recording, exercise the three costs: drop the
-files in (rebuild), Expand All and scroll (render), type into the search box
-(search). Use `?reset=true` to clear storage between runs so uploads start from
-the same state.
+2. Record with Chrome DevTools' **Performance** panel while exercising all three paths:
+   - **Rebuild:** Drop the generated folder into the upload zone.
+   - **Render:** Click **Expand All** and scroll.
+   - **Search:** Type into the search box.
+3. Reload with `?reset=true` between runs so each benchmark starts from an empty IndexedDB.
 
-Two numbers worth watching besides the timings:
+**Additional metrics to watch:**
+- **DOM element count:** Run `document.querySelectorAll('div').length` after **Expand All**. It should stay in the low hundreds regardless of tree size. If it grows with node count, virtualization is broken.
+- **Heap size:** Check memory after a rebuild—the tree is held both in memory and in IndexedDB.
 
-- `document.querySelectorAll('div').length` after Expand All — this should stay
-  in the low hundreds no matter how large the tree is. If it tracks the node
-  count, the virtualization has been broken.
-- Heap size after a rebuild — the tree is held in memory *and* in IndexedDB.
+### Outside the Browser (Library-Level)
 
-### Outside the browser
-
-`parseMibModule` and `MibTreeBuilder` are plain functions with no DOM
-dependency, so they can be timed directly:
+`parseMibModule` and `MibTreeBuilder` have no DOM dependencies and can be benchmarked directly with Bun:
 
 ```ts
 import { parseMibModule, flattenTree } from './src/lib/mib-parser';
@@ -70,17 +65,18 @@ console.timeEnd('build');
 console.log(flattenTree(tree).length, 'nodes');
 ```
 
-Run it with `bun run <script>.ts`. A `ParsedModule[]` can be reused across
-builds — `buildTree` does not modify it — but a `MibTreeBuilder` **instance**
-cannot: it accumulates state in its maps, so construct a new one per build.
+Run with `bun run <script>.ts`.
+
+> [!NOTE]
+> A `ParsedModule[]` array is safe to reuse across builds (`buildTree` does not mutate it), but a `MibTreeBuilder` **instance** is single-use—construct a new one for each build.
 
 ---
 
-## Current numbers
+## Current Benchmarks
 
-Reference points, not guarantees. Synthetic corpus, Chromium, warm cache.
+Reference points (not guarantees), measured on a synthetic corpus in Chromium with a warm cache.
 
-**400 modules / 14 MB / 63k nodes**, library level:
+### Library-Level (`400 modules / 14 MB / 63k nodes`)
 
 | Stage | Time |
 |---|---|
@@ -89,268 +85,113 @@ Reference points, not guarantees. Synthetic corpus, Chromium, warm cache.
 | `flattenTree` | ~3 ms |
 | `filterTreeByQuery` | ~15–20 ms |
 
-**80 files / 5.4 MB / 16k nodes**, in-browser rebuild paths. Wall time is how
-long the operation takes; blocked is how much of that the main thread spends
-unable to respond (total time in tasks over 50 ms):
+### In-Browser Rebuild Paths (`80 files / 5.4 MB / 16k nodes`)
 
-| Action | Wall | Main thread blocked |
+*Wall time* is total elapsed duration; *Main thread blocked* is time spent in long tasks (>50 ms) where the UI cannot respond.
+
+| Action | Wall Time | Main Thread Blocked |
 |---|---|---|
-| Bulk upload of 79 files (nothing cached) | ~1270 ms | ~90 ms |
-| Adding one more file to those 79 | ~505 ms | ~105 ms |
-| Rebuild Tree with nothing changed | ~455 ms | 0 ms |
+| Bulk upload of 79 files (cold cache) | ~1270 ms | ~90 ms |
+| Adding 1 file to those 79 | ~505 ms | ~105 ms |
+| **Rebuild Tree** (nothing changed) | ~455 ms | 0 ms |
 
-Wall time is the less interesting number: parsing and building now happen in a
-worker, so most of it is time the app is still usable. What remains on the main
-thread is reading the records, receiving the tree, and rendering.
+Because parsing, building, and tree persistence run in a Web Worker, most wall time happens while the UI remains interactive. Main-thread time is spent reading records, receiving the tree, and rendering.
 
-Where a rebuild's time goes at that size — worth knowing before optimizing it,
-because the storage half is bigger than it looks:
+### Rebuild Breakdown (`80 files / 5.4 MB / 16k nodes`)
 
-| Stage | Time | Runs on |
+| Stage | Time | Thread |
 |---|---|---|
-| Read every stored MIB (`getAll`) | ~38 ms | main |
-| Parse all files | ~185 ms | worker |
-| Build the tree | ~55 ms | worker |
-| **Write the merged tree** | **~176 ms** | worker |
-| Receive the tree from the worker | ~76 ms | main |
+| Read all stored MIBs (`getAll`) | ~38 ms | Main |
+| Parse all files | ~185 ms | Worker |
+| Build tree | ~55 ms | Worker |
+| **Write merged tree** | **~176 ms** | Worker |
+| Receive tree from worker | ~76 ms | Main |
 
-And what it costs to move data across the worker boundary, which is what shapes
-the design:
+### Worker Boundary Overhead (`5.4 MB / 16k nodes`)
 
-| | Time |
+| Operation | Time |
 |---|---|
-| Post 5.4 MB of MIB text to a worker | ~95 ms |
-| Post the tree there and back | ~222 ms |
-| `structuredClone` of the tree, one way | ~76 ms |
+| `postMessage` 5.4 MB of MIB text to worker | ~95 ms |
+| `postMessage` tree round-trip | ~222 ms |
+| `structuredClone` of the tree (one way) | ~76 ms |
 
-**60 files / ~12k nodes**, in-browser interactions:
+### UI Interactions (`60 files / ~12k nodes`)
 
 | Action | Time |
 |---|---|
 | Upload (parse + build + persist) | ~625 ms |
 | Expand All | ~85 ms |
 | Collapse All | ~60 ms |
-| Selecting a node | one frame |
+| Select a node | 1 frame (~17 ms worst-case gap) |
 
-"One frame" means the worst gap between animation frames after the click is
-~17 ms, i.e. no visible stall. That is the number to watch for selection: a
-regression here shows up as a gap of several frames, not as a slower average.
-
-Parsing is the largest single CPU cost, but it is not the majority of a rebuild:
-persisting the tree is comparable, and the reads on either side add more. Any
-plan to make rebuilds cheaper has to account for the write, which no amount of
-incremental parsing or building removes.
+> [!IMPORTANT]
+> Parsing is the single largest CPU cost, but **persisting the merged tree** is comparable (~176 ms). Any plan to speed up rebuilds must account for the IndexedDB write, which incremental parsing or building alone does not eliminate.
 
 ---
 
-## What was optimized and why
+## Completed Optimizations
 
-Each of these fixed a specific super-linear behaviour. They are recorded because
-the naive version of each is the obvious way to write it, and easy to
-reintroduce.
+Each item below fixed a specific super-linear bottleneck or stall. They are documented here because the naive implementation is often the obvious one and easy to reintroduce.
 
 ### Rendering
 
-**The whole tree was in the DOM.** `TreeNode` rendered itself and recursed into
-its children, so Expand All produced one DOM subtree per MIB object — tens of
-thousands of elements. `MibTreeView` now flattens the expanded branches into a
-flat row list and renders only the window that is on screen.
-*24,328 → 151 elements at 12k nodes.*
+- **Virtualized tree rows** *(24,328 → 151 DOM elements at 12k nodes)*: `MibTreeView` flattens expanded branches into a `TreeRow[]` list and renders only the visible viewport window instead of recursively mounting every `TreeNode`.
+- **Single-pass collapse:** Collapsing a node now removes the target OID and all descendant OIDs in one `Set` update using string prefix matching, replacing a quadratic loop that copied the `Set` per descendant.
+- **Deferred search filtering:** Search queries pass through `useDeferredValue` so typing stays immediate while large trees re-filter at lower priority.
 
-**Collapse was quadratic.** Collapsing a node called the expansion setter once
-per descendant, and each call copied the whole `Set`. It is now one update that
-drops the OID and every descendant OID by string prefix.
+### Parsing & Tree Building
 
-**Search filtered on every keystroke.** The query now goes through
-`useDeferredValue`, so the input updates immediately and the filter runs at
-lower priority.
+- **Single bottom-up search pass:** `filterTreeByQuery` previously re-scanned subtrees at every level. It now runs one bottom-up pass, allocates a `children` array only when matches exist, and matches descriptions with a case-insensitive regex rather than lowercasing every description string.
+- **Root-only Pass 3 traversal** *(759 ms → 176 ms at 63k nodes)*: Pass 3 previously started from every seed node (recomputing `enterprises` 6–7 times). It now starts only from seeds without a seed parent.
+- **Backtracking cycle-detection set:** `computeOidRecursive` reuses one `visited` `Set` (deleting on unwind) instead of allocating `new Set(visited)` per child.
+- **Indexed duplicate detection:** A per-parent `name|subid` map (`childIndex`) replaces linear scans of `parent.children`, eliminating quadratic linking under `enterprises`.
+- **Single-pass file masking** *(272 ms → 177 ms over 3.3 MB)*: Macro bodies and string literals are blanked once per file using space runs, and `OBJECT-TYPE` blocks slice into that masked copy by offset instead of re-masking per block.
+- **Linear line-anchored regexes** *(536 ms → 4 ms on 20k comment lines)*: Line-start patterns changed from `^\s*` to `^[ \t]*` under the `/m` flag so whitespace-only stretches (like stripped comment blocks) cannot cause quadratic backtracking across newlines.
+- **Keyword guards for rare constructs:** Cheap case-insensitive keyword checks skip scanning for constructs (`MODULE-COMPLIANCE`, `OBJECT-GROUP`, `NOTIFICATION-GROUP`, etc.) that a module doesn't contain.
 
-### Parsing and tree building
+### Storage & Data Flow
 
-**`filterTreeByQuery` re-scanned subtrees.** It asked "does this subtree contain
-a match?" for a node and then asked the same question again for each of its
-children — the whole subtree was walked once per level. It is now a single
-bottom-up pass, allocating a children array only when a child is actually kept,
-and matching descriptions with a case-insensitive regex instead of lower-casing
-a copy of every description in the tree.
-
-**Pass 3 walked the tree once per seed level.** OID computation started from
-every seed node, but the seeds form a chain (`iso → org → dod → internet → …`),
-so everything under `enterprises` was recomputed six or seven times. It now
-starts only from seeds that have no seed parent.
-*759 ms → 176 ms at 63k nodes.*
-
-**The cycle-detection set was copied per child.** `computeOidRecursive` passed
-`new Set(visited)` to each child. One set is now reused, with entries removed on
-the way back up, which is equivalent because only the current root-to-node path
-matters.
-
-**Duplicate child detection scanned the children array.** Every parent link
-searched the parent's existing children linearly — quadratic for `enterprises`
-with hundreds of vendor MIBs under it. A per-parent `name|subid` index makes it
-a map lookup.
-
-**Masking is done once, not once per block.** Definitions are searched for in a
-copy of the file with macro bodies and string contents blanked out. Building
-that copy with a per-character regex, and building it again for every
-OBJECT-TYPE block, cost more than the parse it protects: blanking now copies
-runs of spaces, and the OBJECT-TYPE blocks carry their offsets so the one
-whole-file copy can be sliced. *272 ms → 177 ms over 3.3 MB, against 159 ms
-before masking existed.*
-
-**A whitespace-only file made the line-anchored patterns quadratic.** With the
-`m` flag `^` already matches at every line start, so the `^\s*` those patterns
-began with bought nothing - but it could run across every blank line left in the
-file from each of those starts. Comments come out as blank lines, so a module
-that is all comments, or a wall of `-----` rules, cost half a second per
-megabyte before a single definition was read. They now use `^[ \t]*`, which
-cannot cross a newline. *536 ms → 4 ms for 20k comment lines.*
-
-**Absent constructs were still scanned for.** Each of the `MODULE-COMPLIANCE`,
-`OBJECT-GROUP`, `NOTIFICATION-GROUP`, … patterns scans the whole file with a
-lazy `[\s\S]*?`. A cheap keyword test now skips the ones a module does not use.
-
-### Storage and data flow
-
-**A connection per operation.** `openDB()` opened a new IndexedDB connection
-every call, so a rebuild opened one per file. The connection is cached.
-
-**A transaction per file.** Rebuild bookkeeping wrote each MIB record
-individually; the records are collected and written in one transaction.
-
-**Full reads for single lookups.** Upload read every stored MIB to find one by
-file name — quadratic over a bulk upload. It uses the `fileName` index. Delete
-read every record just to check whether any were left; it counts instead.
-
-**Every MIB re-parsed on each node click.** `NodeDetails` looked for a matching
-`TEXTUAL-CONVENTION` by parsing every stored MIB, on every selection.
-*This was most of the 14x on node selection.*
-
-**...and then re-parsed once after every file change.** Caching that index per
-MIB list removed the per-click cost but left one full re-parse on the first node
-click after any upload or delete — a 150–270 ms stall at 5 MB of MIBs, growing
-with the collection. The rebuild already parses every module, so it now collects
-the TEXTUAL-CONVENTIONs and stores them next to the merged tree; the details
-panel does a map lookup. A tree stored before this still falls back to parsing
-on demand.
-
-**Selecting a node invalidated the whole row model.** The effect that expands
-the path to the selected node always handed back a new `Set`, so every click
-changed `expandedOids` by identity and made the tree view rebuild all of its
-rows — the entire tree, once Expand All had been used. It now returns the
-previous `Set` when the path is already expanded, and does not add the selected
-node's own OID unless it has children, since expanding a leaf means nothing.
-Leaves are most of what gets clicked, so without that second part the first part
-almost never applies.
-
-**Full-tree search per breadcrumb segment.** `OidBreadcrumb` searched the entire
-tree for each OID in the path; it descends the path once instead.
-
-**Every rebuild re-parsed every file.** Only the file that changed can have a
-different body, so parsed modules are now kept in a session-scoped cache keyed
-by MIB id, reused when the content is identical. The cache is deliberately *not*
-persisted: a page reload does not rebuild — it renders the stored tree — so
-persisting it would buy nothing and cost a serialization round trip. Uploading
-also seeds the cache with the parse it already did to read the module name, so
-a file is no longer parsed twice on the way in.
-
-**The UI waited for the tree to be written.** A rebuild persisted the tree, then
-re-read it (and every MIB record) to put it into React state. The state is now
-published from what the rebuild already has in memory, before the write.
-*Adding one file to 79: 644 → 195 ms.*
-
-**The rebuild ran on the main thread.** Parsing, building and writing the tree
-now happen in a Web Worker (`src/workers/rebuild.worker.ts`), so a rebuild no
-longer freezes the app.
-*Main thread blocked: 249 → 89 ms bulk, 309 → 105 ms adding a file, 145 → 0 ms
-for Rebuild Tree.*
-
-Two things had to be true for that to be worth doing, and the naive version of
-it is a net **loss**:
-
-- **The worker keeps the parse cache**, so only changed files' contents cross
-  the boundary. Posting all 5.4 MB costs ~95 ms of main-thread serialization —
-  about what parsing them costs, so sending everything every time would trade
-  one main-thread cost for another.
-- **The worker writes the merged tree.** Receiving the tree costs the main
-  thread ~76 ms of deserialization, which is more than the ~55 ms build it took
-  away. Only by also moving the ~176 ms write does the balance come out ahead.
-
-The tree is posted back before it is written, so the UI renders the new tree
-while the worker is still persisting it.
+- **Cached IndexedDB connection:** `openDB()` reuses one connection instead of opening a new connection per file.
+- **Batched metadata writes:** Rebuild bookkeeping updates all changed MIB records in a single IndexedDB transaction instead of one transaction per file.
+- **Indexed lookups & counts:** Upload checks existing files via the `fileName` index (instead of reading every record), and delete checks emptiness with a count query.
+- **Precomputed `TEXTUAL-CONVENTION` index:** `NodeDetails` previously re-parsed every MIB on every click (and later on the first click after any change—a 150–270 ms stall). Rebuilds now persist collected TCs alongside `mergedTree` so lookups are O(1).
+- **Stable `expandedOids` on node selection:** Clicking a node returns the existing `Set` reference when its ancestor path is already expanded (and skips adding leaf OIDs), avoiding unnecessary full row-model rebuilds.
+- **Single-descent breadcrumbs:** `OidBreadcrumb` walks the tree once along the OID path instead of searching the whole tree per segment.
+- **In-memory session parse cache:** `rebuild.ts` caches `ParsedModule`s by MIB id (keyed on unchanged content), and upload seeds the cache with the initial module-name parse so files are parsed once. Deliberately not persisted—page reloads render the stored tree without rebuilding.
+- **Publish state before persisting** *(adding 1 file to 79: 644 ms → 195 ms)*: React state updates directly from the in-memory rebuild result before IndexedDB writes finish, removing a redundant read-back.
+- **Web Worker rebuild** *(main-thread blocked: 249 → 89 ms bulk, 309 → 105 ms add-1, 145 → 0 ms rebuild)*: Parsing, tree building, and persisting `mergedTree` run in `src/workers/rebuild.worker.ts`. Two constraints make this a net win:
+  1. **Worker owns the parse cache** (avoiding ~95 ms of main-thread serialization to send all 5.4 MB of MIB text on every rebuild).
+  2. **Worker writes `mergedTree`** (deserializing the returned tree costs ~76 ms on the main thread, which exceeds the ~55 ms build—offloading the ~176 ms write tips the balance).
 
 ---
 
-## Invariants worth keeping
+## Invariants Worth Keeping
 
-Things that are load-bearing and not obvious from the code alone:
+Load-bearing constraints that are easy to break accidentally:
 
-- **Every tree row is the same height.** The virtual window computes positions
-  from `ROW_HEIGHT` (28 px). A row that can grow — wrapping text, a taller
-  badge — breaks scrolling silently. Keep long text on `truncate`.
-- **Expansion state is keyed by OID string.** That is what lets collapse work by
-  prefix, and what lets expansion survive a rebuild.
-- **`expandedOids` must keep its identity when nothing changed.** It is a
-  dependency of the tree view's row model; handing back a fresh `Set` on every
-  selection rebuilds every row.
-- **Tree rows are recycled by position.** Rows are keyed by index so React can
-  reuse the DOM while scrolling, which means any state a row keeps in a ref
-  belongs to the *position*, not to the node. Anything node-specific must record
-  which OID it belongs to — as the double-click detection does.
-- **A `MibTreeBuilder` is single-use.** Its symbol, name and child maps
-  accumulate across a build, so every build needs a fresh instance — this is
-  why the retry loop in `rebuildAllTrees` constructs one each time round. The
-  `ParsedModule[]` itself is not modified and can be reused.
-- **Only changed file contents cross the worker boundary.** The worker holds the
-  parse cache and the main thread tracks which ids it has sent. Sending
-  everything each time costs about as much as the parsing the worker saves.
-- **The worker writes the merged tree, not the main thread.** Moving that write
-  back would make the worker a net loss, because receiving the tree already
-  costs the main thread more than the build did.
-- **A rebuild publishes state before it persists.** The React state is set from
-  what the rebuild holds in memory; the IndexedDB writes follow. Anything that
-  reads the tree back to populate state would put the write back on the
-  critical path.
-- **MIB-derived text never goes in a `console.*` format string.** The first
-  argument to `console.error`/`warn`/`log` is a format string, so a file named
-  `%s.mib` swallows the argument after it — the error object vanishes from the
-  log — and `%c` injects CSS into the browser console. Pass such values as their
-  own argument. CodeQL flags this as `js/tainted-format-string`.
-- **Regexes run over MIB text must be linear.** The content is a file the user
-  supplied, so a pattern that backtracks quadratically is a way to hang the tab,
-  and CodeQL flags it as `js/polynomial-redos`. Spell out the alternatives you
-  mean rather than skipping ahead with something like `[^;]*?`: the module
-  header pattern did that to allow `DEFINITIONS IMPLICIT TAGS ::=` and went
-  quadratic — 1 s on 256 KB that never matched, and four times that on 512 KB.
-  A quick check is to run a candidate against `'A DEFINITIONS x\n'.repeat(n)`
-  for growing n and confirm the time grows with n rather than n².
-- **The keyword guards in the parser must stay case-insensitive.** The block
-  patterns are `/i`; a guard using `indexOf` on an uppercase literal would skip
-  lower-case definitions.
-- **Only the last file of a bulk upload triggers a rebuild.** If
-  `skipReload` handling changes, uploading n files goes back to n rebuilds.
+### Rendering & UI
+- **Fixed 28 px row height:** Virtualization calculates scroll offsets from `ROW_HEIGHT` (28 px / `h-7`). Wrapping text or taller badges will silently break scrolling—keep long text truncated.
+- **OID-keyed expansion state:** Keying `expandedOids` by OID string enables O(n) prefix collapse and lets expansion survive rebuilds.
+- **Stable `expandedOids` identity:** Returning a new `Set` when nothing changed forces `MibTreeView` to rebuild every row.
+- **Position-keyed rows:** Virtualized rows are keyed by viewport index for DOM reuse. Any ref state inside a row belongs to the *slot*, not the node—tie node-specific state (like double-click tracking) to the node's OID.
+
+### Tree Builder & Worker
+- **`MibTreeBuilder` is single-use:** Internal maps accumulate state across a build; always instantiate a new builder per build (including inside retry loops). `ParsedModule[]` is safe to reuse.
+- **Send only uncached file contents to the worker:** Sending all MIB text on every rebuild costs roughly as much as parsing it on the main thread.
+- **Keep `mergedTree` writes in the worker:** Moving the write back to the main thread makes the worker a net loss.
+- **Publish state before persisting:** Never re-read the tree from IndexedDB just to populate React state after a rebuild.
+- **Batch bulk uploads:** Only the final file in a multi-file upload should trigger a rebuild (`skipReload` must stay `true` for earlier files).
+
+### Parser
+- **Linear regexes only:** MIB files are user-supplied, so polynomial backtracking can hang the tab (flagged by CodeQL as `js/polynomial-redos`). Avoid patterns like `[^;]*?` across unbounded text; test candidates against repeated non-matching inputs (e.g., `'A DEFINITIONS x\n'.repeat(n)`) to confirm linear scaling.
+- **Case-insensitive keyword guards:** Block patterns use `/i`; guards must not use case-sensitive `indexOf` on uppercase literals.
 
 ---
 
-## Known remaining costs
+## Known Remaining Costs
 
-- **Every mutation still rebuilds the whole tree.** The parse cache means only
-  the changed file is re-parsed, but the tree is rebuilt from scratch and
-  rewritten whole. See
-  [INCREMENTAL_UPDATE_PROPOSAL_EN.md](./INCREMENTAL_UPDATE_PROPOSAL_EN.md),
-  including the reassessment of what that would actually be worth.
-- **The merged tree is written as one record.** ~176 ms at 16k nodes, and it
-  scales with the tree. It is off the main thread now, but it is still a floor
-  under how quickly a rebuild can finish.
-- **The whole tree crosses the worker boundary.** ~76 ms of main-thread
-  deserialization at 16k nodes, and it grows with the tree. Avoiding it would
-  mean the UI querying the tree in the worker rather than holding it, which is a
-  much larger change than anything here.
-- **The row model covers every visible row, not just the rendered window.**
-  `flattenVisibleRows` has to walk all expanded branches to know the list's
-  height, so with Expand All on a large tree each rebuild allocates one row
-  object per node. It is only rebuilt when the tree, the expansion set, compact
-  mode or the query changes — keeping it that way is what keeps interaction
-  cheap.
-- **The tree is held twice in memory** during filtering: `filterTreeByQuery`
-  returns copies of the matching nodes rather than a view.
+- **Full rebuild on every mutation:** While unchanged files hit the parse cache, the tree is still rebuilt and rewritten in full. See [INCREMENTAL_UPDATE_PROPOSAL_EN.md](./INCREMENTAL_UPDATE_PROPOSAL_EN.md) for why incremental updates are currently deferred.
+- **Single-record tree write (~176 ms at 16k nodes):** Off the main thread, but still sets a floor on rebuild wall time and scales with tree size.
+- **Full tree transfer across worker boundary (~76 ms at 16k nodes):** Avoiding main-thread deserialization would require keeping the tree inside the worker and querying slices asynchronously—a significantly larger architectural change.
+- **Full visible row model:** `flattenVisibleRows` walks all expanded branches to compute total scroll height, allocating one row object per expanded node when the tree, expansion set, compact mode, or search query changes.
+- **Double tree in memory during search:** `filterTreeByQuery` allocates copies of matching nodes rather than returning a view.
