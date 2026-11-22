@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { ChevronRight, Home } from 'lucide-react';
+import { ChevronRight, House } from 'lucide-react';
 import type { MibNode } from '../types/mib';
 import { getOidPath } from '../lib/oid-utils';
 
@@ -40,7 +40,7 @@ export default function OidBreadcrumb({ node, tree, onNavigate }: OidBreadcrumbP
         className="flex items-center hover:text-blue-600 transition-colors flex-shrink-0"
         title="Go to root"
       >
-        <Home size={14} />
+        <House size={14} />
       </button>
 
       {breadcrumbItems.map((item, index) => {

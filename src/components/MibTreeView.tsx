@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MibNode } from '../types/mib';
 import TreeNode, { ROW_HEIGHT } from './TreeNode';
-import { FileQuestion } from 'lucide-react';
+import { FileQuestionMark } from 'lucide-react';
 
 // Extra rows rendered above and below the viewport to avoid blank space while scrolling
 const OVERSCAN = 8;
@@ -179,7 +179,7 @@ export default function MibTreeView({
   if (isEmpty) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-gray-400 p-8">
-        <FileQuestion size={64} className="mb-4" />
+        <FileQuestionMark size={64} className="mb-4" />
         <p className="text-lg font-medium">{emptyTitle}</p>
         <p className="text-sm mt-2">{emptyHint}</p>
       </div>

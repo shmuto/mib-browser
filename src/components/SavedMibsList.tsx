@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import type { StoredMibData } from '../types/mib';
-import { FileText, Trash2, Download, CheckSquare, Square, Search, X, AlertTriangle } from 'lucide-react';
+import { FileText, Trash, Download, SquareCheckBig, Square, Search, X, TriangleExclamationPoint } from 'lucide-react';
 import { formatFileSize } from '../lib/storage';
 import ConfirmModal from './ConfirmModal';
 
@@ -214,7 +214,7 @@ export default function SavedMibsList({
               className="p-1 hover:bg-red-100 rounded text-red-600 transition-colors"
               title="Delete selected"
             >
-              <Trash2 size={14} />
+              <Trash size={14} />
             </button>
           </div>
         </div>
@@ -236,7 +236,7 @@ export default function SavedMibsList({
                     className="text-gray-400 hover:text-blue-600 transition-colors"
                     title={allSelected ? 'Deselect All' : 'Select All'}
                   >
-                    {allSelected ? <CheckSquare size={14} /> : <Square size={14} />}
+                    {allSelected ? <SquareCheckBig size={14} /> : <Square size={14} />}
                   </button>
                 </th>
                 <SortableHeader field="name">Name</SortableHeader>
@@ -257,7 +257,7 @@ export default function SavedMibsList({
                         onClick={(e) => toggleSelection(mib.id, e)}
                         className="text-gray-400 hover:text-blue-600 transition-colors"
                       >
-                        {isSelected ? <CheckSquare size={14} /> : <Square size={14} />}
+                        {isSelected ? <SquareCheckBig size={14} /> : <Square size={14} />}
                       </button>
                     </td>
 
@@ -271,7 +271,7 @@ export default function SavedMibsList({
                         <span className="font-medium text-gray-800 truncate">{mib.fileName}</span>
                         {mib.error && (
                           <div className="relative group">
-                            <AlertTriangle size={14} className="text-amber-500 flex-shrink-0 cursor-help" />
+                            <TriangleExclamationPoint size={14} className="text-amber-500 flex-shrink-0 cursor-help" />
                             <div className="absolute right-0 top-full mt-1 hidden group-hover:block z-50 w-max max-w-xs p-2 bg-gray-900 text-white text-xs rounded shadow-lg whitespace-normal break-words">
                               {mib.missingDependencies && mib.missingDependencies.length > 0 ? (
                                 <>
@@ -327,7 +327,7 @@ export default function SavedMibsList({
                         className="p-1 hover:bg-red-100 rounded text-gray-400 hover:text-red-600 transition-colors"
                         title="Delete"
                       >
-                        <Trash2 size={14} />
+                        <Trash size={14} />
                       </button>
                     </td>
                   </tr>

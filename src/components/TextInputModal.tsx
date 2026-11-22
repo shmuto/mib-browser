@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, FileText, Loader2 } from 'lucide-react';
+import { X, FileText, LoaderCircle } from 'lucide-react';
 import { sanitizeFileName } from '../lib/storage';
 
 interface TextInputModalProps {
@@ -169,7 +169,7 @@ IMPORTS
           >
             {isSubmitting ? (
               <>
-                <Loader2 size={16} className="animate-spin" />
+                <LoaderCircle size={16} className="animate-spin" />
                 Processing...
               </>
             ) : (

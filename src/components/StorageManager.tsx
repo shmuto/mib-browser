@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { StorageInfo } from '../types/mib';
-import { Trash2, HardDrive, RefreshCw } from 'lucide-react';
+import { Trash, HardDrive, RefreshCw } from 'lucide-react';
 import { formatFileSize } from '../lib/storage';
 import ConfirmModal from './ConfirmModal';
 import toast from 'react-hot-toast';
@@ -64,7 +64,7 @@ export default function StorageManager({ storageInfo, onClearAll, onRebuildTree 
           className="flex items-center justify-center gap-2 px-3 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm"
           title="Delete all"
         >
-          <Trash2 size={16} />
+          <Trash size={16} />
         </button>
       </div>
 

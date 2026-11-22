@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from 'react';
-import { AlertTriangle, X } from 'lucide-react';
+import { TriangleExclamationPoint, X } from 'lucide-react';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -74,7 +74,7 @@ export default function ConfirmModal({
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <div className="flex items-center gap-3">
-            <AlertTriangle size={24} className={styles.icon} />
+            <TriangleExclamationPoint size={24} className={styles.icon} />
             <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
           </div>
           <button

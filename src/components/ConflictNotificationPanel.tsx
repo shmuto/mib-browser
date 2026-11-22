@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { AlertTriangle, X } from 'lucide-react';
+import { TriangleExclamationPoint, X } from 'lucide-react';
 import type { StoredMibData, MibConflict } from '../types/mib';
 import ConfirmModal from './ConfirmModal';
 
@@ -83,7 +83,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
       {/* Notification bar */}
       <div className="bg-yellow-50 border-b border-yellow-200 px-6 py-3">
         <div className="flex items-center gap-3">
-          <AlertTriangle size={20} className="text-yellow-600 flex-shrink-0" />
+          <TriangleExclamationPoint size={20} className="text-yellow-600 flex-shrink-0" />
           <div className="flex-1">
             <h3 className="text-sm font-semibold text-yellow-800">
               {conflictPairs.length} Conflict{conflictPairs.length > 1 ? 's' : ''} Detected
@@ -116,7 +116,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
               <div className="flex items-center gap-2">
-                <AlertTriangle size={20} className="text-yellow-600" />
+                <TriangleExclamationPoint size={20} className="text-yellow-600" />
                 <h2 className="text-lg font-semibold text-gray-800">Conflict Details</h2>
               </div>
               <button

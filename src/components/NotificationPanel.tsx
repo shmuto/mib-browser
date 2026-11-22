@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { X, AlertCircle, CheckCircle, AlertTriangle, Info, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, CircleExclamationPoint, CircleCheckBig, TriangleExclamationPoint, Info, ChevronDown, ChevronUp } from 'lucide-react';
 
 export interface Notification {
   id: string;
@@ -26,11 +26,11 @@ export default function NotificationPanel({ notifications, onDismiss, onClearAll
   const getIcon = (type: Notification['type']) => {
     switch (type) {
       case 'error':
-        return <AlertCircle size={16} className="text-red-500 flex-shrink-0" />;
+        return <CircleExclamationPoint size={16} className="text-red-500 flex-shrink-0" />;
       case 'warning':
-        return <AlertTriangle size={16} className="text-amber-500 flex-shrink-0" />;
+        return <TriangleExclamationPoint size={16} className="text-amber-500 flex-shrink-0" />;
       case 'success':
-        return <CheckCircle size={16} className="text-green-500 flex-shrink-0" />;
+        return <CircleCheckBig size={16} className="text-green-500 flex-shrink-0" />;
       case 'info':
         return <Info size={16} className="text-blue-500 flex-shrink-0" />;
     }
