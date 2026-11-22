@@ -225,11 +225,16 @@ export function collectLicensesFromDirs(packageDirs, nodeModulesDir) {
  * Checks whether a package appears to ship runtime JS code (as opposed to types-only
  * packages like `csstype` that do not end up in the browser bundle).
  *
+ * Packages without an explicit entry field still resolve to `index.js` by default
+ * (e.g. `scheduler` used by `react-dom`), so that file counts as an entrypoint too.
+ *
  * @param {Record<string, unknown>} pkg
+ * @param {string} pkgDir
  * @returns {boolean}
  */
-function hasRuntimeEntrypoint(pkg) {
-  return Boolean(pkg.main || pkg.module || pkg.browser || pkg.exports);
+function hasRuntimeEntrypoint(pkg, pkgDir) {
+  if (pkg.main || pkg.module || pkg.browser || pkg.exports) return true;
+  return fs.existsSync(path.join(pkgDir, 'index.js'));
 }
 
 /**
@@ -259,7 +264,7 @@ export function collectLicensesFromPackageJson(projectRoot, extraPackages = []) 
     if (!pkgDir) continue;
 
     const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
-    if (hasRuntimeEntrypoint(pkg)) {
+    if (hasRuntimeEntrypoint(pkg, pkgDir)) {
       packageDirs.add(pkgDir);
     }
 

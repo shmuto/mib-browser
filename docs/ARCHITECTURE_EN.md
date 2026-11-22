@@ -44,7 +44,7 @@ The application is **entirely client-side**. There is no backend, no API call, a
 
 Heavy work—parsing MIBs, merging them into one OID tree, and persisting that tree—runs in a **Web Worker** so adding or removing files does not freeze the UI. If Web Workers are unavailable, the exact same pipeline falls back to running inline on the main thread.
 
-**Tech stack:** React 18, TypeScript, Vite, Tailwind CSS, `lucide-react` for icons, and `react-hot-toast` for transient messages. State is managed with standard React state and a single custom hook (`useMibStorage`).
+**Tech stack:** React 19, TypeScript, Vite, Tailwind CSS, `lucide-react` for icons, and `react-hot-toast` for transient messages. State is managed with standard React state and a single custom hook (`useMibStorage`).
 
 ---
 

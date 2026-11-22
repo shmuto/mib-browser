@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { ChevronRight, Home } from 'lucide-react';
+import { ChevronRight, House } from 'lucide-react';
 import type { MibNode } from '../types/mib';
 import { getOidPath } from '../lib/oid-utils';
 
@@ -37,10 +37,10 @@ export default function OidBreadcrumb({ node, tree, onNavigate }: OidBreadcrumbP
     <nav className="flex items-center gap-1 text-sm text-gray-600 mb-3 overflow-x-auto pb-2">
       <button
         onClick={() => breadcrumbItems[0].node && onNavigate(breadcrumbItems[0].node)}
-        className="flex items-center hover:text-blue-600 transition-colors flex-shrink-0"
+        className="flex items-center hover:text-blue-600 transition-colors shrink-0"
         title="Go to root"
       >
-        <Home size={14} />
+        <House size={14} />
       </button>
 
       {breadcrumbItems.map((item, index) => {
@@ -48,7 +48,7 @@ export default function OidBreadcrumb({ node, tree, onNavigate }: OidBreadcrumbP
         const isCurrent = item.oid === node.oid;
 
         return (
-          <div key={item.oid} className="flex items-center gap-1 flex-shrink-0">
+          <div key={item.oid} className="flex items-center gap-1 shrink-0">
             <ChevronRight size={14} className="text-gray-400" />
             {isLast || isCurrent ? (
               <span className="font-semibold text-gray-800">{item.name}</span>

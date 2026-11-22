@@ -49,7 +49,7 @@ describe('resolvePackageDirFromModuleId', () => {
       path.join(nodeModulesDir, 'react'),
     );
 
-    const lucideEntry = path.join(nodeModulesDir, 'lucide-react', 'dist', 'esm', 'lucide-react.js');
+    const lucideEntry = path.join(nodeModulesDir, 'lucide-react', 'dist', 'esm', 'lucide-react.mjs');
     expect(resolvePackageDirFromModuleId(lucideEntry, nodeModulesDir)).toBe(
       path.join(nodeModulesDir, 'lucide-react'),
     );

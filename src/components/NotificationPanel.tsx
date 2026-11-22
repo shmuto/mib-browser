@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { X, AlertCircle, CheckCircle, AlertTriangle, Info, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, CircleExclamationPoint, CircleCheckBig, TriangleExclamationPoint, Info, ChevronDown, ChevronUp } from 'lucide-react';
 
 export interface Notification {
   id: string;
@@ -26,13 +26,13 @@ export default function NotificationPanel({ notifications, onDismiss, onClearAll
   const getIcon = (type: Notification['type']) => {
     switch (type) {
       case 'error':
-        return <AlertCircle size={16} className="text-red-500 flex-shrink-0" />;
+        return <CircleExclamationPoint size={16} className="text-red-500 shrink-0" />;
       case 'warning':
-        return <AlertTriangle size={16} className="text-amber-500 flex-shrink-0" />;
+        return <TriangleExclamationPoint size={16} className="text-amber-500 shrink-0" />;
       case 'success':
-        return <CheckCircle size={16} className="text-green-500 flex-shrink-0" />;
+        return <CircleCheckBig size={16} className="text-green-500 shrink-0" />;
       case 'info':
-        return <Info size={16} className="text-blue-500 flex-shrink-0" />;
+        return <Info size={16} className="text-blue-500 shrink-0" />;
     }
   };
 
@@ -50,7 +50,7 @@ export default function NotificationPanel({ notifications, onDismiss, onClearAll
   };
 
   return (
-    <div className="bg-white border-b border-gray-200 shadow-sm">
+    <div className="bg-white border-b border-gray-200 shadow-xs">
       {/* Header */}
       <div
         className="flex items-center justify-between px-4 py-2 cursor-pointer hover:bg-gray-50"
@@ -79,7 +79,7 @@ export default function NotificationPanel({ notifications, onDismiss, onClearAll
               e.stopPropagation();
               onClearAll();
             }}
-            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 hover:bg-gray-100 rounded"
+            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 hover:bg-gray-100 rounded-sm"
           >
             Clear all
           </button>
@@ -93,7 +93,7 @@ export default function NotificationPanel({ notifications, onDismiss, onClearAll
           {notifications.map((notification) => (
             <div
               key={notification.id}
-              className={`flex items-start gap-2 p-2 rounded border ${getBgColor(notification.type)}`}
+              className={`flex items-start gap-2 p-2 rounded-sm border ${getBgColor(notification.type)}`}
             >
               {getIcon(notification.type)}
               <div className="flex-1 min-w-0">
@@ -115,7 +115,7 @@ export default function NotificationPanel({ notifications, onDismiss, onClearAll
               </div>
               <button
                 onClick={() => onDismiss(notification.id)}
-                className="p-1 hover:bg-gray-200 rounded flex-shrink-0"
+                className="p-1 hover:bg-gray-200 rounded-sm shrink-0"
               >
                 <X size={14} className="text-gray-500" />
               </button>

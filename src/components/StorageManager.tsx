@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { StorageInfo } from '../types/mib';
-import { Trash2, HardDrive, RefreshCw } from 'lucide-react';
+import { Trash, HardDrive, RefreshCw } from 'lucide-react';
 import { formatFileSize } from '../lib/storage';
 import ConfirmModal from './ConfirmModal';
 import toast from 'react-hot-toast';
@@ -53,7 +53,7 @@ export default function StorageManager({ storageInfo, onClearAll, onRebuildTree 
         <button
           onClick={handleRebuildTree}
           disabled={isRebuilding}
-          className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-500 text-white rounded-sm hover:bg-blue-600 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           title="Rebuild tree"
         >
           <RefreshCw size={16} className={isRebuilding ? 'animate-spin' : ''} />
@@ -61,15 +61,15 @@ export default function StorageManager({ storageInfo, onClearAll, onRebuildTree 
         </button>
         <button
           onClick={handleClearAll}
-          className="flex items-center justify-center gap-2 px-3 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm"
+          className="flex items-center justify-center gap-2 px-3 py-2 bg-red-500 text-white rounded-sm hover:bg-red-600 transition-colors text-sm"
           title="Delete all"
         >
-          <Trash2 size={16} />
+          <Trash size={16} />
         </button>
       </div>
 
       <p className="text-xs text-gray-400 mt-2 text-center">
-        Page unresponsive? Add <code className="bg-gray-200 px-1 rounded">?reset=true</code> to URL
+        Page unresponsive? Add <code className="bg-gray-200 px-1 rounded-sm">?reset=true</code> to URL
       </p>
 
       {/* Confirm Modal */}

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { Upload, FileText, Loader2, ClipboardPaste, FolderOpen } from 'lucide-react';
+import { Upload, FileText, LoaderCircle, ClipboardPaste, FolderOpen } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { UploadResult } from '../types/mib';
 import {
@@ -336,7 +336,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
 
       {uploadProgress.isScanning ? (
         <>
-          <Loader2 className="mx-auto mb-4 text-blue-500 animate-spin" size={48} />
+          <LoaderCircle className="mx-auto mb-4 text-blue-500 animate-spin" size={48} />
           <p className="text-lg font-medium text-gray-700 mb-2">
             Reading folder...
           </p>
@@ -346,7 +346,7 @@ export default function FileUploader({ onUpload, onUploadFromText, onReload, onN
         </>
       ) : uploadProgress.isUploading ? (
         <>
-          <Loader2 className="mx-auto mb-4 text-blue-500 animate-spin" size={48} />
+          <LoaderCircle className="mx-auto mb-4 text-blue-500 animate-spin" size={48} />
           <p className="text-lg font-medium text-gray-700 mb-2">
             Processing MIB files...
           </p>

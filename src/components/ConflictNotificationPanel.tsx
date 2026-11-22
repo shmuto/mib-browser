@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { AlertTriangle, X } from 'lucide-react';
+import { TriangleExclamationPoint, X } from 'lucide-react';
 import type { StoredMibData, MibConflict } from '../types/mib';
 import ConfirmModal from './ConfirmModal';
 
@@ -83,7 +83,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
       {/* Notification bar */}
       <div className="bg-yellow-50 border-b border-yellow-200 px-6 py-3">
         <div className="flex items-center gap-3">
-          <AlertTriangle size={20} className="text-yellow-600 flex-shrink-0" />
+          <TriangleExclamationPoint size={20} className="text-yellow-600 shrink-0" />
           <div className="flex-1">
             <h3 className="text-sm font-semibold text-yellow-800">
               {conflictPairs.length} Conflict{conflictPairs.length > 1 ? 's' : ''} Detected
@@ -99,7 +99,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
               <button
                 key={index}
                 onClick={() => setSelectedConflict(pair)}
-                className="px-3 py-1.5 bg-yellow-100 hover:bg-yellow-200 rounded text-xs font-medium text-yellow-800 transition-colors border border-yellow-300"
+                className="px-3 py-1.5 bg-yellow-100 hover:bg-yellow-200 rounded-sm text-xs font-medium text-yellow-800 transition-colors border border-yellow-300"
               >
                 {pair.file1.fileName} ⇄ {pair.file2.fileName}
                 <span className="ml-1.5 text-yellow-600">({pair.conflicts.length})</span>
@@ -111,17 +111,17 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
 
       {/* Conflict details dialog */}
       {selectedConflict && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
               <div className="flex items-center gap-2">
-                <AlertTriangle size={20} className="text-yellow-600" />
+                <TriangleExclamationPoint size={20} className="text-yellow-600" />
                 <h2 className="text-lg font-semibold text-gray-800">Conflict Details</h2>
               </div>
               <button
                 onClick={() => setSelectedConflict(null)}
-                className="p-2 hover:bg-gray-100 rounded transition-colors"
+                className="p-2 hover:bg-gray-100 rounded-sm transition-colors"
               >
                 <X size={20} className="text-gray-500" />
               </button>
@@ -159,7 +159,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
               </p>
               <div className="space-y-3">
                 {selectedConflict.conflicts.map((conflict, index) => (
-                  <div key={index} className="bg-gray-50 border border-gray-200 rounded p-3">
+                  <div key={index} className="bg-gray-50 border border-gray-200 rounded-sm p-3">
                     <div className="flex items-start justify-between mb-2">
                       <div>
                         {/* For a shared OID the OID is the subject, not the name:
@@ -176,7 +176,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
                       <div className="mt-2 space-y-1">
                         <p className="text-xs font-medium text-gray-700">Differences:</p>
                         {conflict.differences.map((diff, idx) => (
-                          <div key={idx} className="text-xs bg-white border border-gray-200 rounded p-2">
+                          <div key={idx} className="text-xs bg-white border border-gray-200 rounded-sm p-2">
                             <div className="font-medium text-gray-700">{diff.field}:</div>
                             <div className="grid grid-cols-2 gap-2 mt-1">
                               <div>
@@ -216,7 +216,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
                           keepFileName: selectedConflict.file2.fileName,
                         });
                       }}
-                      className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm font-medium"
+                      className="px-4 py-2 bg-red-500 text-white rounded-sm hover:bg-red-600 transition-colors text-sm font-medium"
                     >
                       Delete {selectedConflict.file1.fileName}
                     </button>
@@ -229,7 +229,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
                           keepFileName: selectedConflict.file1.fileName,
                         });
                       }}
-                      className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm font-medium"
+                      className="px-4 py-2 bg-red-500 text-white rounded-sm hover:bg-red-600 transition-colors text-sm font-medium"
                     >
                       Delete {selectedConflict.file2.fileName}
                     </button>
@@ -237,7 +237,7 @@ export default function ConflictNotificationPanel({ mibs, onDeleteFile }: Confli
                 )}
                 <button
                   onClick={() => setSelectedConflict(null)}
-                  className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition-colors text-sm font-medium"
+                  className="px-4 py-2 bg-gray-300 text-gray-700 rounded-sm hover:bg-gray-400 transition-colors text-sm font-medium"
                 >
                   {selectedConflict.sameModule ? 'Cancel' : 'Close'}
                 </button>

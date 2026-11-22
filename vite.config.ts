@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { thirdPartyLicensesPlugin } from './scripts/third-party-licenses.mjs'
 
-// https://vitejs.dev/config/
+// https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), thirdPartyLicensesPlugin()],
+  plugins: [react(), tailwindcss(), thirdPartyLicensesPlugin()],
   base: '/mib-browser/',
 })

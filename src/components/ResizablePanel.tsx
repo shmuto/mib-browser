@@ -95,7 +95,7 @@ export default function ResizablePanel({
       {/* Resizer */}
       <div
         onMouseDown={handleMouseDown}
-        className={`w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize flex-shrink-0 transition-colors ${
+        className={`w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize shrink-0 transition-colors ${
           isDragging ? 'bg-blue-500' : ''
         }`}
       />

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, FileText, Loader2 } from 'lucide-react';
+import { X, FileText, LoaderCircle } from 'lucide-react';
 import { sanitizeFileName } from '../lib/storage';
 
 interface TextInputModalProps {
@@ -87,7 +87,7 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
       onClick={handleBackgroundClick}
     >
       <div
@@ -103,7 +103,7 @@ export default function TextInputModal({ isOpen, onClose, onSubmit }: TextInputM
           <button
             onClick={onClose}
             disabled={isSubmitting}
-            className="p-2 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
+            className="p-2 hover:bg-gray-100 rounded-sm transition-colors disabled:opacity-50"
             title="Close"
           >
             <X size={20} className="text-gray-500" />
@@ -158,18 +158,18 @@ IMPORTS
           <button
             onClick={onClose}
             disabled={isSubmitting}
-            className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors disabled:opacity-50"
+            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-sm hover:bg-gray-300 transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onClick={handleSubmit}
             disabled={isSubmitting || !content.trim() || !fileName.trim()}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors disabled:opacity-50 flex items-center gap-2"
+            className="px-4 py-2 bg-blue-500 text-white rounded-sm hover:bg-blue-600 transition-colors disabled:opacity-50 flex items-center gap-2"
           >
             {isSubmitting ? (
               <>
-                <Loader2 size={16} className="animate-spin" />
+                <LoaderCircle size={16} className="animate-spin" />
                 Processing...
               </>
             ) : (

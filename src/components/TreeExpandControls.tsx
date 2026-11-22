@@ -21,7 +21,7 @@ export default function TreeExpandControls({
     <div className="flex items-center gap-2">
       <button
         onClick={onExpandAll}
-        className="px-3 py-1.5 text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 rounded transition-colors flex items-center gap-1.5"
+        className="px-3 py-1.5 text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-sm transition-colors flex items-center gap-1.5"
         title="Expand All"
       >
         <ChevronsDown size={14} />
@@ -30,7 +30,7 @@ export default function TreeExpandControls({
 
       <button
         onClick={onCollapseAll}
-        className="px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 rounded transition-colors flex items-center gap-1.5"
+        className="px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 rounded-sm transition-colors flex items-center gap-1.5"
         title="Collapse All"
       >
         <ChevronsUp size={14} />
@@ -43,7 +43,7 @@ export default function TreeExpandControls({
             type="checkbox"
             checked={compactMode}
             onChange={onToggleCompactMode}
-            className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+            className="w-4 h-4 text-blue-600 rounded-sm focus:ring-blue-500"
           />
           <span className="text-xs text-gray-700">Compact View</span>
         </label>
@@ -56,7 +56,7 @@ export default function TreeExpandControls({
             type="checkbox"
             checked={notificationsOnly}
             onChange={onToggleNotificationsOnly}
-            className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+            className="w-4 h-4 text-blue-600 rounded-sm focus:ring-blue-500"
           />
           <span className="text-xs text-gray-700">Traps Only</span>
         </label>
