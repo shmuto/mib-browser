@@ -64,7 +64,7 @@ export default function ConfirmModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
       onClick={handleBackgroundClick}
     >
       <div
@@ -79,7 +79,7 @@ export default function ConfirmModal({
           </div>
           <button
             onClick={onCancel}
-            className="p-2 hover:bg-gray-100 rounded transition-colors"
+            className="p-2 hover:bg-gray-100 rounded-sm transition-colors"
             title="Close"
           >
             <X size={20} className="text-gray-500" />
@@ -95,13 +95,13 @@ export default function ConfirmModal({
         <div className="p-4 border-t border-gray-200 flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors"
+            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-sm hover:bg-gray-300 transition-colors"
           >
             {cancelLabel}
           </button>
           <button
             onClick={onConfirm}
-            className={`px-4 py-2 text-white rounded transition-colors ${styles.button}`}
+            className={`px-4 py-2 text-white rounded-sm transition-colors ${styles.button}`}
           >
             {confirmLabel}
           </button>

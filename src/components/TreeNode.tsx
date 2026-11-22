@@ -68,7 +68,7 @@ function TreeNode({
       onClick={handleClick}
     >
       {hasChildren ? (
-        <button onClick={handleToggle} className="p-0.5 hover:bg-gray-200 rounded">
+        <button onClick={handleToggle} className="p-0.5 hover:bg-gray-200 rounded-sm">
           {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
         </button>
       ) : (

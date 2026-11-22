@@ -296,7 +296,7 @@ export default function App() {
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4 shadow-sm">
+      <header className="bg-white border-b border-gray-200 px-6 py-4 shadow-xs">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Database size={32} className="text-blue-500" />

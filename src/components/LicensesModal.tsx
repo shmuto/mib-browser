@@ -109,7 +109,7 @@ export default function LicensesModal({ isOpen, onClose }: LicensesModalProps) {
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
       onClick={handleBackgroundClick}
       role="dialog"
       aria-modal="true"
@@ -131,7 +131,7 @@ export default function LicensesModal({ isOpen, onClose }: LicensesModalProps) {
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded transition-colors"
+            className="p-2 hover:bg-gray-100 rounded-sm transition-colors"
             title="Close"
             aria-label="Close"
           >
@@ -146,7 +146,7 @@ export default function LicensesModal({ isOpen, onClose }: LicensesModalProps) {
           )}
 
           {error && (
-            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-4">
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-sm p-4">
               Could not load license notices ({error}). You can view the raw text file directly:{' '}
               <a
                 href={rawTextUrl}
@@ -169,7 +169,7 @@ export default function LicensesModal({ isOpen, onClose }: LicensesModalProps) {
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-semibold text-gray-800">{entry.name}</h3>
                     <span className="text-xs text-gray-500 font-mono">v{entry.version}</span>
-                    <span className="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-medium">
+                    <span className="text-xs px-2 py-0.5 rounded-sm bg-blue-50 text-blue-700 border border-blue-200 font-medium">
                       {entry.license}
                     </span>
                   </div>
@@ -185,13 +185,13 @@ export default function LicensesModal({ isOpen, onClose }: LicensesModalProps) {
                     </a>
                   )}
                 </div>
-                <pre className="text-xs font-mono bg-white p-4 text-gray-700 whitespace-pre-wrap break-words">
+                <pre className="text-xs font-mono bg-white p-4 text-gray-700 whitespace-pre-wrap wrap-break-word">
                   {entry.licenseText}
                 </pre>
                 {entry.noticeText && (
                   <div className="border-t border-gray-200 bg-gray-50 p-4">
                     <p className="text-xs font-semibold text-gray-600 mb-2">NOTICE</p>
-                    <pre className="text-xs font-mono text-gray-700 whitespace-pre-wrap break-words">
+                    <pre className="text-xs font-mono text-gray-700 whitespace-pre-wrap wrap-break-word">
                       {entry.noticeText}
                     </pre>
                   </div>
@@ -213,7 +213,7 @@ export default function LicensesModal({ isOpen, onClose }: LicensesModalProps) {
           </a>
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors text-sm"
+            className="px-4 py-2 bg-gray-500 text-white rounded-sm hover:bg-gray-600 transition-colors text-sm"
           >
             Close
           </button>

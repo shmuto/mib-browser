@@ -33,7 +33,7 @@ export default function MibContentModal({ mib, onClose }: MibContentModalProps) 
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
       onClick={handleBackgroundClick}
     >
       <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
@@ -47,7 +47,7 @@ export default function MibContentModal({ mib, onClose }: MibContentModalProps) 
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded transition-colors"
+            className="p-2 hover:bg-gray-100 rounded-sm transition-colors"
             title="Close"
           >
             <X size={20} className="text-gray-500" />
@@ -56,7 +56,7 @@ export default function MibContentModal({ mib, onClose }: MibContentModalProps) 
 
         {/* Content */}
         <div className="flex-1 overflow-auto p-4">
-          <pre className="text-xs font-mono bg-gray-50 p-4 rounded border border-gray-200 whitespace-pre-wrap break-words">
+          <pre className="text-xs font-mono bg-gray-50 p-4 rounded-sm border border-gray-200 whitespace-pre-wrap wrap-break-word">
             {mib.content}
           </pre>
         </div>
@@ -65,7 +65,7 @@ export default function MibContentModal({ mib, onClose }: MibContentModalProps) 
         <div className="p-4 border-t border-gray-200 flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+            className="px-4 py-2 bg-gray-500 text-white rounded-sm hover:bg-gray-600 transition-colors"
           >
             Close
           </button>

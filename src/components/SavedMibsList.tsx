@@ -177,7 +177,7 @@ export default function SavedMibsList({
             placeholder="Search files..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-8 pr-8 py-1.5 text-xs border border-gray-300 rounded focus:outline-none focus:border-blue-500"
+            className="w-full pl-8 pr-8 py-1.5 text-xs border border-gray-300 rounded-sm focus:outline-hidden focus:border-blue-500"
           />
           {searchQuery && (
             <button
@@ -204,14 +204,14 @@ export default function SavedMibsList({
           <div className="flex gap-1">
             <button
               onClick={handleBulkDownload}
-              className="p-1 hover:bg-blue-100 rounded text-blue-600 transition-colors"
+              className="p-1 hover:bg-blue-100 rounded-sm text-blue-600 transition-colors"
               title="Download selected"
             >
               <Download size={14} />
             </button>
             <button
               onClick={handleBulkDelete}
-              className="p-1 hover:bg-red-100 rounded text-red-600 transition-colors"
+              className="p-1 hover:bg-red-100 rounded-sm text-red-600 transition-colors"
               title="Delete selected"
             >
               <Trash size={14} />
@@ -267,12 +267,12 @@ export default function SavedMibsList({
                       onClick={() => onSelect(mib)}
                     >
                       <div className="flex items-center gap-2">
-                        <FileText size={14} className="text-blue-500 flex-shrink-0" />
+                        <FileText size={14} className="text-blue-500 shrink-0" />
                         <span className="font-medium text-gray-800 truncate">{mib.fileName}</span>
                         {mib.error && (
                           <div className="relative group">
-                            <TriangleExclamationPoint size={14} className="text-amber-500 flex-shrink-0 cursor-help" />
-                            <div className="absolute right-0 top-full mt-1 hidden group-hover:block z-50 w-max max-w-xs p-2 bg-gray-900 text-white text-xs rounded shadow-lg whitespace-normal break-words">
+                            <TriangleExclamationPoint size={14} className="text-amber-500 shrink-0 cursor-help" />
+                            <div className="absolute right-0 top-full mt-1 hidden group-hover:block z-50 w-max max-w-xs p-2 bg-gray-900 text-white text-xs rounded-sm shadow-lg whitespace-normal wrap-break-word">
                               {mib.missingDependencies && mib.missingDependencies.length > 0 ? (
                                 <>
                                   <p className="font-semibold mb-1">Missing MIBs:</p>
@@ -324,7 +324,7 @@ export default function SavedMibsList({
                             },
                           });
                         }}
-                        className="p-1 hover:bg-red-100 rounded text-gray-400 hover:text-red-600 transition-colors"
+                        className="p-1 hover:bg-red-100 rounded-sm text-gray-400 hover:text-red-600 transition-colors"
                         title="Delete"
                       >
                         <Trash size={14} />

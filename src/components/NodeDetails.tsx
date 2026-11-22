@@ -174,7 +174,7 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
     return (
       <button
         onClick={() => copyToClipboard(text, fieldName)}
-        className="ml-2 p-1 hover:bg-gray-100 rounded transition-colors text-gray-500 hover:text-gray-700"
+        className="ml-2 p-1 hover:bg-gray-100 rounded-sm transition-colors text-gray-500 hover:text-gray-700"
         title="Copy to clipboard"
       >
         {isCopied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
@@ -196,7 +196,7 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
         </h3>
         <button
           onClick={copyAllDetails}
-          className="px-3 py-1.5 bg-blue-500 text-white rounded text-sm font-medium hover:bg-blue-600 transition-colors flex items-center gap-1.5"
+          className="px-3 py-1.5 bg-blue-500 text-white rounded-sm text-sm font-medium hover:bg-blue-600 transition-colors flex items-center gap-1.5"
         >
           {copiedField === 'all' ? <Check size={14} /> : <Copy size={14} />}
           Copy All
@@ -224,7 +224,7 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
           <div>
             <dt className="text-sm font-medium text-gray-600 mb-1">Source File</dt>
             <dd
-              className="text-sm text-gray-800 bg-blue-50 px-2 py-1 rounded border border-blue-200 font-mono cursor-pointer hover:bg-blue-100 transition-colors"
+              className="text-sm text-gray-800 bg-blue-50 px-2 py-1 rounded-sm border border-blue-200 font-mono cursor-pointer hover:bg-blue-100 transition-colors"
               onClick={() => onViewMib?.(sourceMib)}
             >
               {sourceMib.fileName}
@@ -246,7 +246,7 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
               Values
               {enumSource && <span className="text-xs text-gray-400"> ({enumSource})</span>}
             </dt>
-            <dd className="text-sm text-gray-800 bg-purple-50 p-3 rounded border border-purple-200">
+            <dd className="text-sm text-gray-800 bg-purple-50 p-3 rounded-sm border border-purple-200">
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
                 {enumValues.map(ev => (
                   <div key={ev.value} className="flex justify-between">
@@ -267,7 +267,7 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
             <dt className="text-sm font-medium text-gray-600 mb-1">
               Variables <span className="text-xs text-gray-400">({node.variables.length})</span>
             </dt>
-            <dd className="text-sm text-gray-800 bg-amber-50 p-3 rounded border border-amber-200">
+            <dd className="text-sm text-gray-800 bg-amber-50 p-3 rounded-sm border border-amber-200">
               <div className="flex flex-wrap gap-2">
                 {node.variables.map(variable => {
                   const target = variableNodes.get(variable);
@@ -275,7 +275,7 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
                     <button
                       key={variable}
                       onClick={() => onSelectNode?.(target)}
-                      className="px-2 py-1 bg-amber-100 text-amber-800 rounded text-xs font-mono hover:bg-amber-200 transition-colors cursor-pointer"
+                      className="px-2 py-1 bg-amber-100 text-amber-800 rounded-sm text-xs font-mono hover:bg-amber-200 transition-colors cursor-pointer"
                       title={target.oid}
                     >
                       {variable}
@@ -283,7 +283,7 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
                   ) : (
                     <span
                       key={variable}
-                      className="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs font-mono"
+                      className="px-2 py-1 bg-gray-100 text-gray-500 rounded-sm text-xs font-mono"
                       title="Not in the loaded tree"
                     >
                       {variable}
@@ -298,7 +298,7 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
         {node.description && (
           <div>
             <dt className="text-sm font-medium text-gray-600 mb-1">Description</dt>
-            <dd className="text-sm text-gray-800 bg-gray-50 p-3 rounded border border-gray-200 whitespace-pre-wrap">
+            <dd className="text-sm text-gray-800 bg-gray-50 p-3 rounded-sm border border-gray-200 whitespace-pre-wrap">
               {node.description}
             </dd>
           </div>
@@ -307,13 +307,13 @@ export default function NodeDetails({ node, onSelectNode, mibs, onViewMib, tree,
         {node.children.length > 0 && (
           <div>
             <dt className="text-sm font-medium text-gray-600 mb-1">Children ({node.children.length})</dt>
-            <dd className="text-sm text-gray-800 bg-gray-50 p-3 rounded border border-gray-200">
+            <dd className="text-sm text-gray-800 bg-gray-50 p-3 rounded-sm border border-gray-200">
               <div className="flex flex-wrap gap-2">
                 {node.children.map(child => (
                   <button
                     key={child.oid}
                     onClick={() => onSelectNode?.(child)}
-                    className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-mono hover:bg-blue-200 transition-colors cursor-pointer"
+                    className="px-2 py-1 bg-blue-100 text-blue-700 rounded-sm text-xs font-mono hover:bg-blue-200 transition-colors cursor-pointer"
                   >
                     {child.name}
                   </button>
