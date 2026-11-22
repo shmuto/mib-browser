@@ -44,7 +44,7 @@ The application is **entirely client-side**. There is no backend, no API call, a
 
 Heavy work—parsing MIBs, merging them into one OID tree, and persisting that tree—runs in a **Web Worker** so adding or removing files does not freeze the UI. If Web Workers are unavailable, the exact same pipeline falls back to running inline on the main thread.
 
-**Tech stack:** React 18, TypeScript, Vite, Tailwind CSS, `lucide-react` / `react-icons` for icons, and `react-hot-toast` for transient messages. State is managed with standard React state and a single custom hook (`useMibStorage`).
+**Tech stack:** React 18, TypeScript, Vite, Tailwind CSS, `lucide-react` for icons, and `react-hot-toast` for transient messages. State is managed with standard React state and a single custom hook (`useMibStorage`).
 
 ---
 
@@ -91,6 +91,7 @@ Heavy work—parsing MIBs, merging them into one OID tree, and persisting that t
 | `NotificationPanel` | Persistent warnings and errors (missing dependencies, failed uploads). Exports `useNotifications`. |
 | `StorageManager` | IndexedDB usage display, **Rebuild Tree**, and **Clear All** actions. |
 | `MibContentModal` | Raw text viewer for a stored MIB file. |
+| `LicensesModal` | Displays bundled third-party open-source license notices fetched from `third-party-licenses.json`. |
 | `TextInputModal` | Modal for pasting raw MIB source instead of uploading a file. |
 | `ConfirmModal` | Confirmation dialog for destructive actions. |
 | `ResizablePanel` | Two-pane splitter that persists its width in `localStorage`. |
